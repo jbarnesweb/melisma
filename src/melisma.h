@@ -51,6 +51,7 @@ enum ml_binding_type {
 
 struct ml_binding {
 	enum ml_binding_type type;
+	const struct ml_note *note;
 	const struct ml_syllable *syllable;
 };
 

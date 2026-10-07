@@ -56,14 +56,19 @@ test_exact_binding(void)
 	}
 
 	if (bindings.bindings[0].type != ML_BINDING_ONSET ||
+	    bindings.bindings[0].note != &notes_data[0] ||
 	    bindings.bindings[0].syllable != &elements[0].syllable ||
 	    bindings.bindings[1].type != ML_BINDING_ONSET ||
+	    bindings.bindings[1].note != &notes_data[1] ||
 	    bindings.bindings[1].syllable != &elements[1].syllable ||
 	    bindings.bindings[2].type != ML_BINDING_ONSET ||
+	    bindings.bindings[2].note != &notes_data[2] ||
 	    bindings.bindings[2].syllable != &elements[2].syllable ||
 	    bindings.bindings[3].type != ML_BINDING_CONTINUATION ||
+	    bindings.bindings[3].note != &notes_data[3] ||
 	    bindings.bindings[3].syllable != &elements[2].syllable ||
 	    bindings.bindings[4].type != ML_BINDING_CONTINUATION ||
+	    bindings.bindings[4].note != &notes_data[4] ||
 	    bindings.bindings[4].syllable != &elements[2].syllable) {
 		fprintf(stderr, "binding sequence does not match expected result\n");
 		ml_binding_sequence_destroy(&bindings);
@@ -141,7 +146,16 @@ test_untexted(void)
 		.count = 1,
 		.capacity = 1,
 	};
-	struct ml_note_sequence notes = { .count = 1 };
+	struct ml_note note = {
+		.pitch = 60,
+		.onset = 0,
+		.duration = 480,
+	};
+	struct ml_note_sequence notes = {
+		.notes = &note,
+		.count = 1,
+		.ticks_per_quarter = 480,
+	};
 	struct ml_binding_sequence bindings;
 	int ret;
 
@@ -153,6 +167,7 @@ test_untexted(void)
 
 	if (bindings.count != 1 ||
 	    bindings.bindings[0].type != ML_BINDING_UNTEXTED ||
+	    bindings.bindings[0].note != &note ||
 	    bindings.bindings[0].syllable != NULL) {
 		fprintf(stderr, "untexted binding does not match expected result\n");
 		ml_binding_sequence_destroy(&bindings);

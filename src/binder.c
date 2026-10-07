@@ -5,6 +5,7 @@
 static int
 ml_binding_append(struct ml_binding_sequence *bindings,
 		  enum ml_binding_type type,
+		  const struct ml_note *note,
 		  const struct ml_syllable *syllable)
 {
 	struct ml_binding *new_bindings;
@@ -23,6 +24,7 @@ ml_binding_append(struct ml_binding_sequence *bindings,
 	}
 
 	bindings->bindings[bindings->count].type = type;
+	bindings->bindings[bindings->count].note = note;
 	bindings->bindings[bindings->count].syllable = syllable;
 	++bindings->count;
 
@@ -46,6 +48,7 @@ ml_bind(const struct ml_phrase *phrase,
 {
 	const struct ml_element *element;
 	const struct ml_syllable *syllable;
+	size_t note_index;
 	size_t required;
 	size_t i;
 	unsigned int j;
@@ -71,15 +74,22 @@ ml_bind(const struct ml_phrase *phrase,
 	if (required != notes->count)
 		return -1;
 
+	if (notes->count && !notes->notes)
+		return -1;
+
+	note_index = 0;
+
 	for (i = 0; i < phrase->count; ++i) {
 		element = &phrase->elements[i];
 
 		if (element->type == ML_ELEMENT_UNTEXTED) {
 			if (ml_binding_append(bindings,
 					      ML_BINDING_UNTEXTED,
+					      &notes->notes[note_index],
 					      NULL) < 0)
 				goto error;
 
+			++note_index;
 			continue;
 		}
 
@@ -87,14 +97,20 @@ ml_bind(const struct ml_phrase *phrase,
 
 		if (ml_binding_append(bindings,
 				      ML_BINDING_ONSET,
+				      &notes->notes[note_index],
 				      syllable) < 0)
 			goto error;
+
+		++note_index;
 
 		for (j = 0; j < syllable->continuations; ++j) {
 			if (ml_binding_append(bindings,
 					      ML_BINDING_CONTINUATION,
+					      &notes->notes[note_index],
 					      syllable) < 0)
 				goto error;
+
+			++note_index;
 		}
 	}
 
