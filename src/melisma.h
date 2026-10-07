@@ -2,6 +2,7 @@
 #define MELISMA_H
 
 #include <stddef.h>
+#include <stdio.h>
 
 struct ml_string {
 	char *data;
@@ -61,5 +62,7 @@ int ml_bind(const struct ml_phrase *phrase,
 	struct ml_binding_sequence *bindings);
 
 void ml_binding_sequence_destroy(struct ml_binding_sequence *bindings);
+
+int ml_parse_file(FILE *input, struct ml_phrase *phrase);
 
 #endif /* MELISMA_H */

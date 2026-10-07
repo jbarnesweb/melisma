@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(melisma C)
+include(CTest)
 
 find_package(BISON REQUIRED)
 find_package(FLEX REQUIRED)
@@ -13,3 +14,29 @@ ADD_FLEX_BISON_DEPENDENCY(MelismaLexer MelismaParser)
 add_executable(melisma src/main.c src/melisma.c src/binder.c ${BISON_MelismaParser_OUTPUTS} ${FLEX_MelismaLexer_OUTPUTS})
 
 target_include_directories(melisma PRIVATE ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+if(BUILD_TESTING)
+	add_executable(binder_test
+		tests/binder_test.c
+		src/binder.c
+	)
+
+	target_include_directories(binder_test PRIVATE
+		${CMAKE_CURRENT_SOURCE_DIR}/src
+	)
+
+	add_test(NAME binder COMMAND binder_test)
+	add_executable(parser_test
+		tests/parser_test.c
+		src/melisma.c
+		${BISON_MelismaParser_OUTPUTS}
+		${FLEX_MelismaLexer_OUTPUTS}
+	)
+
+	target_include_directories(parser_test PRIVATE
+		${CMAKE_CURRENT_BINARY_DIR}
+		${CMAKE_CURRENT_SOURCE_DIR}/src
+	)
+
+	add_test(NAME parser COMMAND parser_test)
+endif()

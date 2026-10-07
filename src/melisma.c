@@ -1,5 +1,9 @@
 #include <stddef.h>
 #include <stdlib.h>
+#include <stdlib.h>
+
+#include "melisma_parser.tab.h"
+#include "melisma_lexer.h"
 #include "melisma.h"
 
 void
@@ -48,3 +52,21 @@ ml_phrase_destroy(struct ml_phrase *phrase)
 	phrase->count = 0;
 	phrase->capacity = 0;
 }
+
+int
+ml_parse_file(FILE *input, struct ml_phrase *phrase)
+{
+	yyscan_t scanner;
+	int ret;
+
+	if (yylex_init(&scanner) != 0)
+		return -1;
+
+	yyset_in(input, scanner);
+	ret = yyparse(scanner, phrase);
+
+	yylex_destroy(scanner);
+
+	return ret;
+}
+

@@ -1,12 +1,9 @@
 #include <stdio.h>
 
-#include "melisma_parser.tab.h"
-#include "melisma_lexer.h"
 #include "melisma.h"
 
 int main(int argc, char **argv)
 {
-	yyscan_t scanner;
 	struct ml_phrase phrase;
 	FILE *input;
 	int ret;
@@ -24,53 +21,34 @@ int main(int argc, char **argv)
 
 	ml_phrase_init(&phrase);
 
-	if (yylex_init(&scanner) != 0) {
-		fprintf(stderr, "failed to initialize scanner\n");
+	ret = ml_parse_file(input, &phrase);
+
+	if (ret < 0) {
+		fprintf(stderr, "failed to initialize parser\n");
+		ml_phrase_destroy(&phrase);
 		fclose(input);
 		return 2;
 	}
 
-	yyset_in(input, scanner);
-	ret = yyparse(scanner, &phrase);
-
 	if (ret == 0) {
-		struct ml_note_sequence notes = { .count = 5 };
-		struct ml_binding_sequence bindings;
 		size_t i;
 
-		if (ml_bind(&phrase, &notes, &bindings) < 0) {
-			fprintf(stderr, "failed to bind phrase to notes\n");
-			ret = 1;
-		} else {
-			for (i = 0; i < bindings.count; ++i) {
-				const struct ml_binding *binding = &bindings.bindings[i];
+		for (i = 0; i < phrase.count; ++i) {
+			const struct ml_element *element = &phrase.elements[i];
 
-				switch (binding->type) {
-				case ML_BINDING_ONSET:
-					printf("ONSET %.*s\n",
-					       (int)binding->syllable->text.length,
-					       binding->syllable->text.data);
-					break;
-
-				case ML_BINDING_CONTINUATION:
-					printf("CONTINUATION %.*s\n",
-					       (int)binding->syllable->text.length,
-					       binding->syllable->text.data);
-					break;
-
-				case ML_BINDING_UNTEXTED:
-					printf("UNTEXTED\n");
-					break;
-				}
+			if (element->type == ML_ELEMENT_UNTEXTED) {
+				printf("UNTEXTED\n");
+				continue;
 			}
 
-			ml_binding_sequence_destroy(&bindings);
+			printf("SYLLABLE %.*s continuations=%u\n",
+			       (int)element->syllable.text.length,
+			       element->syllable.text.data,
+			       element->syllable.continuations);
 		}
 	}
-
 	ml_phrase_destroy(&phrase);
 
-	yylex_destroy(scanner);
 	fclose(input);
 
 	return ret ? 1 : 0;
