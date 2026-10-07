@@ -37,6 +37,7 @@ test_exact_binding(void)
 	struct ml_note_sequence notes = {
 		.notes = notes_data,
 		.count = 5,
+		.ticks_per_quarter = 480,
 	};
 	struct ml_binding_sequence bindings;
 	int ret;

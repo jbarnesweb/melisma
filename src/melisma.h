@@ -40,6 +40,7 @@ struct ml_note {
 struct ml_note_sequence {
 	struct ml_note *notes;
 	size_t count;
+	uint32_t ticks_per_quarter;
 };
 
 enum ml_binding_type {
