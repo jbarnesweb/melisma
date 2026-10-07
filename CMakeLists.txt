@@ -10,6 +10,6 @@ FLEX_TARGET(MelismaLexer src/melisma_lexer.l ${CMAKE_CURRENT_BINARY_DIR}/melisma
 
 ADD_FLEX_BISON_DEPENDENCY(MelismaLexer MelismaParser)
 
-add_executable(melisma src/main.c src/melisma.c ${BISON_MelismaParser_OUTPUTS} ${FLEX_MelismaLexer_OUTPUTS})
+add_executable(melisma src/main.c src/melisma.c src/binder.c ${BISON_MelismaParser_OUTPUTS} ${FLEX_MelismaLexer_OUTPUTS})
 
 target_include_directories(melisma PRIVATE ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/src)

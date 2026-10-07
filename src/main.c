@@ -34,20 +34,37 @@ int main(int argc, char **argv)
 	ret = yyparse(scanner, &phrase);
 
 	if (ret == 0) {
+		struct ml_note_sequence notes = { .count = 5 };
+		struct ml_binding_sequence bindings;
 		size_t i;
-	
-		for (i = 0; i < phrase.count; ++i) {
-			const struct ml_element *element = &phrase.elements[i];
-	
-			if (element->type == ML_ELEMENT_UNTEXTED) {
-				printf("UNTEXTED\n");
-				continue;
+
+		if (ml_bind(&phrase, &notes, &bindings) < 0) {
+			fprintf(stderr, "failed to bind phrase to notes\n");
+			ret = 1;
+		} else {
+			for (i = 0; i < bindings.count; ++i) {
+				const struct ml_binding *binding = &bindings.bindings[i];
+
+				switch (binding->type) {
+				case ML_BINDING_ONSET:
+					printf("ONSET %.*s\n",
+					       (int)binding->syllable->text.length,
+					       binding->syllable->text.data);
+					break;
+
+				case ML_BINDING_CONTINUATION:
+					printf("CONTINUATION %.*s\n",
+					       (int)binding->syllable->text.length,
+					       binding->syllable->text.data);
+					break;
+
+				case ML_BINDING_UNTEXTED:
+					printf("UNTEXTED\n");
+					break;
+				}
 			}
-	
-			printf("SYLLABLE %.*s continuations=%u\n",
-			       (int)element->syllable.text.length,
-			       element->syllable.text.data,
-			       element->syllable.continuations);
+
+			ml_binding_sequence_destroy(&bindings);
 		}
 	}
 
