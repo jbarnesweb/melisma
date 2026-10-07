@@ -23,7 +23,7 @@ typedef void *yyscan_t;
 
 %code provides {
 	int yylex(YYSTYPE *yylval, YYLTYPE *yylloc, yyscan_t scanner);
-	void yyerror(YYLTYPE *loc, yyscan_t scanner, const char *message);
+	void yyerror(YYLTYPE *loc, yyscan_t scanner, struct ml_phrase *phrase, const char *message);
 }
 
 %token <text> TOK_SYLLABLE
@@ -39,6 +39,7 @@ typedef void *yyscan_t;
 %start phrase
 
 %parse-param { yyscan_t scanner }
+%parse-param { struct ml_phrase *phrase }
 %lex-param { yyscan_t scanner }
 %destructor { free($$.data); } <text>
 %destructor { free($$.text.data); } <syllable>
@@ -57,9 +58,20 @@ syllable_sequence:
 lyrical_element:
 	syllable
 	{
-		free($1.text.data);
+		struct ml_element element;
+
+		element.type = ML_ELEMENT_SYLLABLE;
+		element.syllable = $1;
+		if (ml_phrase_append(phrase, element) < 0)
+			YYNOMEM;
 	}
 	| TOK_UNTEXTED
+	{
+		struct ml_element element = { 0 };
+		element.type = ML_ELEMENT_UNTEXTED;
+		if (ml_phrase_append(phrase, element) < 0)
+			YYNOMEM;
+	}
 	;
 
 syllable:
@@ -84,9 +96,10 @@ melisma_sequence:
 %%
 
 void
-yyerror(YYLTYPE *loc, yyscan_t scanner, const char *message)
+yyerror(YYLTYPE *loc, yyscan_t scanner, struct ml_phrase *phrase, const char *message)
 {
 	(void)scanner;
+	(void)phrase;
 
 	fprintf(stderr, "%u:%u: %s\n",
 		loc->first_line,
