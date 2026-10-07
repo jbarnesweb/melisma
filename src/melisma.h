@@ -61,6 +61,10 @@ struct ml_binding_sequence {
 	size_t capacity;
 };
 
+int ml_read_midi_file(FILE *input, struct ml_note_sequence *notes);
+
+void ml_note_sequence_destroy(struct ml_note_sequence *notes);
+
 void ml_phrase_init(struct ml_phrase *phrase);
 
 int ml_phrase_append(struct ml_phrase *phrase, struct ml_element element);
