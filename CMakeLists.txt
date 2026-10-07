@@ -1,0 +1,15 @@
+cmake_minimum_required(VERSION 3.16)
+project(melisma C)
+
+find_package(BISON REQUIRED)
+find_package(FLEX REQUIRED)
+
+BISON_TARGET(MelismaParser src/melisma_parser.y ${CMAKE_CURRENT_BINARY_DIR}/melisma_parser.tab.c DEFINES_FILE ${CMAKE_CURRENT_BINARY_DIR}/melisma_parser.tab.h)
+
+FLEX_TARGET(MelismaLexer src/melisma_lexer.l ${CMAKE_CURRENT_BINARY_DIR}/melisma_lexer.c DEFINES_FILE ${CMAKE_CURRENT_BINARY_DIR}/melisma_lexer.h)
+
+ADD_FLEX_BISON_DEPENDENCY(MelismaLexer MelismaParser)
+
+add_executable(melisma src/main.c ${BISON_MelismaParser_OUTPUTS} ${FLEX_MelismaLexer_OUTPUTS})
+
+target_include_directories(melisma PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
