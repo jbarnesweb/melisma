@@ -5,19 +5,9 @@
 %}
 
 %code requires {
-#include <stddef.h>
+#include "melisma.h"
 
 typedef void *yyscan_t;
-
-struct ml_string {
-	char *data;
-	size_t length;
-};
-
-struct ml_syllable {
-	struct ml_string text;
-	unsigned int continuations;
-};
 
 }
 
