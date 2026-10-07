@@ -27,7 +27,17 @@ test_exact_binding(void)
 		.count = 3,
 		.capacity = 3,
 	};
-	struct ml_note_sequence notes = { .count = 5 };
+	struct ml_note notes_data[] = {
+		{ .pitch = 60, .onset = 0,    .duration = 480 },
+		{ .pitch = 62, .onset = 480,  .duration = 480 },
+		{ .pitch = 64, .onset = 960,  .duration = 480 },
+		{ .pitch = 65, .onset = 1440, .duration = 480 },
+		{ .pitch = 67, .onset = 1920, .duration = 480 },
+	};
+	struct ml_note_sequence notes = {
+		.notes = notes_data,
+		.count = 5,
+	};
 	struct ml_binding_sequence bindings;
 	int ret;
 

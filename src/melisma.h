@@ -2,6 +2,7 @@
 #define MELISMA_H
 
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 
 struct ml_string {
@@ -30,7 +31,14 @@ struct ml_phrase {
 	size_t capacity;
 };
 
+struct ml_note {
+	unsigned int pitch;
+	uint64_t onset;
+	uint64_t duration;
+};
+
 struct ml_note_sequence {
+	struct ml_note *notes;
 	size_t count;
 };
 

@@ -1,6 +1,5 @@
 #include <stddef.h>
 #include <stdlib.h>
-#include <stdlib.h>
 
 #include "melisma_parser.tab.h"
 #include "melisma_lexer.h"
