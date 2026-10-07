@@ -73,6 +73,10 @@ int ml_bind(const struct ml_phrase *phrase,
 
 void ml_binding_sequence_destroy(struct ml_binding_sequence *bindings);
 
+int ml_write_bound_ir(FILE *output,
+		      const struct ml_note_sequence *notes,
+		      const struct ml_binding_sequence *bindings);
+
 int ml_parse_file(FILE *input, struct ml_phrase *phrase);
 
 #endif /* MELISMA_H */

@@ -11,7 +11,7 @@ FLEX_TARGET(MelismaLexer src/melisma_lexer.l ${CMAKE_CURRENT_BINARY_DIR}/melisma
 
 ADD_FLEX_BISON_DEPENDENCY(MelismaLexer MelismaParser)
 
-add_executable(melisma src/main.c src/melisma.c src/binder.c ${BISON_MelismaParser_OUTPUTS} ${FLEX_MelismaLexer_OUTPUTS})
+add_executable(melisma src/main.c src/melisma.c src/binder.c src/serializer.c ${BISON_MelismaParser_OUTPUTS} ${FLEX_MelismaLexer_OUTPUTS})
 
 target_include_directories(melisma PRIVATE ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
@@ -26,6 +26,17 @@ if(BUILD_TESTING)
 	)
 
 	add_test(NAME binder COMMAND binder_test)
+	add_executable(serializer_test
+		tests/serializer_test.c
+		src/binder.c
+		src/serializer.c
+	)
+
+	target_include_directories(serializer_test PRIVATE
+		${CMAKE_CURRENT_SOURCE_DIR}/src
+	)
+
+	add_test(NAME serializer COMMAND serializer_test)
 	add_executable(parser_test
 		tests/parser_test.c
 		src/melisma.c
