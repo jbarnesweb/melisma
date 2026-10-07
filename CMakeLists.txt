@@ -36,6 +36,17 @@ if(BUILD_TESTING)
 	)
 
 	add_test(NAME note_sequence COMMAND note_sequence_test)
+	add_executable(cli_test
+		tests/cli_test.c
+	)
+
+	add_dependencies(cli_test melisma)
+
+	add_test(NAME cli
+		COMMAND cli_test
+			$<TARGET_FILE:melisma>
+			${CMAKE_CURRENT_BINARY_DIR}
+	)
 	add_executable(serializer_test
 		tests/serializer_test.c
 		src/binder.c
