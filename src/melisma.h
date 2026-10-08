@@ -77,6 +77,8 @@ int ml_bind(const struct ml_phrase *phrase,
 
 void ml_binding_sequence_destroy(struct ml_binding_sequence *bindings);
 
+int ml_write_abc(FILE *output, const struct ml_note_sequence *notes);
+
 int ml_write_bound_ir(FILE *output,
 		      const struct ml_note_sequence *notes,
 		      const struct ml_binding_sequence *bindings);
