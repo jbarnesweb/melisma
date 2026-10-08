@@ -31,6 +31,22 @@ static const char expected_json[] =
 	"{\"type\":\"note\",\"pitch\":65,\"onset\":1440,\"duration\":480,\"binding\":\"continuation\",\"syllable\":\"a\"}\n"
 	"{\"type\":\"note\",\"pitch\":67,\"onset\":1920,\"duration\":480,\"binding\":\"continuation\",\"syllable\":\"a\"}\n";
 
+static const char expected_abc[] =
+	"X:1\n"
+	"T:\n"
+	"M:4/4\n"
+	"L:1/32\n"
+	"Q:1/4=120\n"
+	"V: Vocal clef=treble name=\"Vocal Melody\" snm=\"Vocal\"\n"
+	"V: Ins clef=treble name=\"Ins Melody\" snm=\"Inst.\"\n"
+	"K:C\n"
+	"\n"
+	"V: Vocal\n"
+	"=C8 =D8 =E8 =F8 | =G8\n"
+	"\n"
+	"V: Ins\n"
+	"z32 | z8\n";
+
 static int
 write_file(const char *path, const void *data, size_t length)
 {
@@ -195,15 +211,14 @@ main(int argc, char **argv)
 	char bad_midi_path[1024] = "";
 	char bad_lyric_path[1024] = "";
 	char mismatch_path[1024] = "";
-	char output_path[1024] = "";
+	char ir_output_path[1024] = "";
+	char abc_output_path[1024] = "";
 	char stdout_path[1024] = "";
 	char stderr_path[1024] = "";
 	char failed_output_path[1024] = "";
 	char full_output_path[1024] = "";
 	char missing_path[1024] = "";
-	char *wrong_arguments[2];
-	char *file_arguments[5];
-	char *stdout_arguments[4];
+	char *arguments[9];
 	int ret = 1;
 
 	if (argc != 3) {
@@ -230,7 +245,8 @@ main(int argc, char **argv)
 	MAKE_PATH(bad_midi_path, "bad.mid");
 	MAKE_PATH(bad_lyric_path, "bad-lyrics.txt");
 	MAKE_PATH(mismatch_path, "mismatch.txt");
-	MAKE_PATH(output_path, "output.jsonl");
+	MAKE_PATH(ir_output_path, "output.jsonl");
+	MAKE_PATH(abc_output_path, "output.abc");
 	MAKE_PATH(stdout_path, "stdout.txt");
 	MAKE_PATH(stderr_path, "stderr.txt");
 	MAKE_PATH(failed_output_path, "failed.jsonl");
@@ -248,31 +264,81 @@ main(int argc, char **argv)
 	    write_file(mismatch_path, "Glo\n", strlen("Glo\n")) < 0)
 		goto out;
 
-	wrong_arguments[0] = argv[1];
-	wrong_arguments[1] = NULL;
-	if (expect_status("wrong argument count", argv[1], wrong_arguments,
-			  stdout_path, stderr_path, 2))
+	arguments[0] = argv[1];
+	arguments[1] = NULL;
+	if (expect_status("too few arguments", argv[1], arguments,
+			  stdout_path, stderr_path, 2) ||
+	    !file_contains(stderr_path, "usage:"))
 		goto out;
 
-	file_arguments[0] = argv[1];
-	file_arguments[1] = missing_path;
-	file_arguments[2] = lyric_path;
-	file_arguments[3] = NULL;
-	if (expect_status("missing MIDI", argv[1], file_arguments,
-			  stdout_path, stderr_path, 2))
+	arguments[1] = "--format";
+	arguments[2] = "unsupported";
+	arguments[3] = midi_path;
+	arguments[4] = lyric_path;
+	arguments[5] = NULL;
+	if (expect_status("unsupported format", argv[1], arguments,
+			  stdout_path, stderr_path, 2) ||
+	    !file_contains(stderr_path, "usage:"))
 		goto out;
 
-	file_arguments[1] = midi_path;
-	file_arguments[2] = missing_path;
-	if (expect_status("missing lyrics", argv[1], file_arguments,
-			  stdout_path, stderr_path, 2))
+	arguments[1] = "--format";
+	arguments[2] = NULL;
+	if (expect_status("missing format value", argv[1], arguments,
+			  stdout_path, stderr_path, 2) ||
+	    !file_contains(stderr_path, "usage:"))
 		goto out;
 
-	file_arguments[1] = bad_midi_path;
-	file_arguments[2] = lyric_path;
-	file_arguments[3] = failed_output_path;
-	file_arguments[4] = NULL;
-	if (expect_status("malformed MIDI", argv[1], file_arguments,
+	arguments[1] = "--format";
+	arguments[2] = "ir";
+	arguments[3] = "--format";
+	arguments[4] = "abc";
+	arguments[5] = midi_path;
+	arguments[6] = lyric_path;
+	arguments[7] = NULL;
+	if (expect_status("duplicate format", argv[1], arguments,
+			  stdout_path, stderr_path, 2) ||
+	    !file_contains(stderr_path, "usage:"))
+		goto out;
+
+	arguments[1] = "--unknown";
+	arguments[2] = midi_path;
+	arguments[3] = lyric_path;
+	arguments[4] = NULL;
+	if (expect_status("unknown option", argv[1], arguments,
+			  stdout_path, stderr_path, 2) ||
+	    !file_contains(stderr_path, "usage:"))
+		goto out;
+
+	arguments[1] = midi_path;
+	arguments[2] = lyric_path;
+	arguments[3] = ir_output_path;
+	arguments[4] = abc_output_path;
+	arguments[5] = NULL;
+	if (expect_status("too many arguments", argv[1], arguments,
+			  stdout_path, stderr_path, 2) ||
+	    !file_contains(stderr_path, "usage:"))
+		goto out;
+
+	arguments[1] = missing_path;
+	arguments[2] = lyric_path;
+	arguments[3] = NULL;
+	if (expect_status("missing MIDI", argv[1], arguments,
+			  stdout_path, stderr_path, 2) ||
+	    !file_contains(stderr_path, "failed to open MIDI file"))
+		goto out;
+
+	arguments[1] = midi_path;
+	arguments[2] = missing_path;
+	if (expect_status("missing lyrics", argv[1], arguments,
+			  stdout_path, stderr_path, 2) ||
+	    !file_contains(stderr_path, "failed to open lyric file"))
+		goto out;
+
+	arguments[1] = bad_midi_path;
+	arguments[2] = lyric_path;
+	arguments[3] = failed_output_path;
+	arguments[4] = NULL;
+	if (expect_status("malformed MIDI IR", argv[1], arguments,
 			  stdout_path, stderr_path, 1) ||
 	    !file_contains(stderr_path, "failed to import MIDI") ||
 	    access(failed_output_path, F_OK) == 0) {
@@ -280,9 +346,23 @@ main(int argc, char **argv)
 		goto out;
 	}
 
-	file_arguments[1] = midi_path;
-	file_arguments[2] = bad_lyric_path;
-	if (expect_status("malformed lyrics", argv[1], file_arguments,
+	arguments[1] = "--format";
+	arguments[2] = "abc";
+	arguments[3] = bad_midi_path;
+	arguments[4] = lyric_path;
+	arguments[5] = failed_output_path;
+	arguments[6] = NULL;
+	if (expect_status("malformed MIDI ABC", argv[1], arguments,
+			  stdout_path, stderr_path, 1) ||
+	    !file_contains(stderr_path, "failed to import MIDI") ||
+	    access(failed_output_path, F_OK) == 0)
+		goto out;
+
+	arguments[1] = midi_path;
+	arguments[2] = bad_lyric_path;
+	arguments[3] = failed_output_path;
+	arguments[4] = NULL;
+	if (expect_status("malformed lyrics IR", argv[1], arguments,
 			  stdout_path, stderr_path, 1) ||
 	    !file_contains(stderr_path, "failed to parse lyrics") ||
 	    file_contains(stderr_path,
@@ -290,37 +370,121 @@ main(int argc, char **argv)
 	    access(failed_output_path, F_OK) == 0)
 		goto out;
 
-	file_arguments[2] = mismatch_path;
-	if (expect_status("binding mismatch", argv[1], file_arguments,
+	arguments[1] = "--format";
+	arguments[2] = "abc";
+	arguments[3] = midi_path;
+	arguments[4] = bad_lyric_path;
+	arguments[5] = failed_output_path;
+	arguments[6] = NULL;
+	if (expect_status("malformed lyrics ABC", argv[1], arguments,
+			  stdout_path, stderr_path, 1) ||
+	    !file_contains(stderr_path, "failed to parse lyrics") ||
+	    file_contains(stderr_path,
+			  "failed to bind lyrics to MIDI notes") ||
+	    access(failed_output_path, F_OK) == 0)
+		goto out;
+
+	arguments[1] = midi_path;
+	arguments[2] = mismatch_path;
+	arguments[3] = failed_output_path;
+	arguments[4] = NULL;
+	if (expect_status("binding mismatch IR", argv[1], arguments,
 			  stdout_path, stderr_path, 1) ||
 	    !file_contains(stderr_path,
 			   "failed to bind lyrics to MIDI notes") ||
 	    access(failed_output_path, F_OK) == 0)
 		goto out;
 
-	file_arguments[2] = lyric_path;
-	file_arguments[3] = directory;
-	if (expect_status("unwritable output", argv[1], file_arguments,
+	arguments[1] = "--format";
+	arguments[2] = "abc";
+	arguments[3] = midi_path;
+	arguments[4] = mismatch_path;
+	arguments[5] = failed_output_path;
+	arguments[6] = NULL;
+	if (expect_status("binding mismatch ABC", argv[1], arguments,
+			  stdout_path, stderr_path, 1) ||
+	    !file_contains(stderr_path,
+			   "failed to bind lyrics to MIDI notes") ||
+	    access(failed_output_path, F_OK) == 0)
+		goto out;
+
+	arguments[1] = midi_path;
+	arguments[2] = lyric_path;
+	arguments[3] = directory;
+	arguments[4] = NULL;
+	if (expect_status("unwritable IR output", argv[1], arguments,
 			  stdout_path, stderr_path, 2) ||
 	    !file_contains(stderr_path, "failed to open output file"))
 		goto out;
 
-	file_arguments[3] = output_path;
-	if (expect_status("explicit output", argv[1], file_arguments,
+	arguments[1] = "--format";
+	arguments[2] = "abc";
+	arguments[3] = midi_path;
+	arguments[4] = lyric_path;
+	arguments[5] = directory;
+	arguments[6] = NULL;
+	if (expect_status("unwritable ABC output", argv[1], arguments,
+			  stdout_path, stderr_path, 2) ||
+	    !file_contains(stderr_path, "failed to open output file"))
+		goto out;
+
+	arguments[1] = midi_path;
+	arguments[2] = lyric_path;
+	arguments[3] = ir_output_path;
+	arguments[4] = NULL;
+	if (expect_status("default IR file", argv[1], arguments,
 			  stdout_path, stderr_path, 0) ||
-	    !file_matches(output_path, expected_json)) {
-		fprintf(stderr, "explicit output did not match expected JSONL\n");
+	    !file_matches(ir_output_path, expected_json) ||
+	    !file_matches(stderr_path, "")) {
+		fprintf(stderr, "default IR file output did not match\n");
 		goto out;
 	}
 
-	stdout_arguments[0] = argv[1];
-	stdout_arguments[1] = midi_path;
-	stdout_arguments[2] = lyric_path;
-	stdout_arguments[3] = NULL;
-	if (expect_status("stdout output", argv[1], stdout_arguments,
+	arguments[1] = midi_path;
+	arguments[2] = lyric_path;
+	arguments[3] = NULL;
+	if (expect_status("default IR stdout", argv[1], arguments,
 			  stdout_path, stderr_path, 0) ||
-	    !file_matches(stdout_path, expected_json)) {
-		fprintf(stderr, "stdout did not match expected JSONL\n");
+	    !file_matches(stdout_path, expected_json) ||
+	    !file_matches(stderr_path, "")) {
+		fprintf(stderr, "default IR stdout did not match\n");
+		goto out;
+	}
+
+	arguments[1] = "--format";
+	arguments[2] = "ir";
+	arguments[3] = midi_path;
+	arguments[4] = lyric_path;
+	arguments[5] = ir_output_path;
+	arguments[6] = NULL;
+	if (expect_status("explicit IR", argv[1], arguments,
+			  stdout_path, stderr_path, 0) ||
+	    !file_matches(ir_output_path, expected_json) ||
+	    !file_matches(stderr_path, "")) {
+		fprintf(stderr, "explicit IR output did not match\n");
+		goto out;
+	}
+
+	arguments[1] = "--format";
+	arguments[2] = "abc";
+	arguments[3] = midi_path;
+	arguments[4] = lyric_path;
+	arguments[5] = abc_output_path;
+	arguments[6] = NULL;
+	if (expect_status("explicit ABC file", argv[1], arguments,
+			  stdout_path, stderr_path, 0) ||
+	    !file_matches(abc_output_path, expected_abc) ||
+	    !file_matches(stderr_path, "")) {
+		fprintf(stderr, "explicit ABC output did not match\n");
+		goto out;
+	}
+
+	arguments[5] = NULL;
+	if (expect_status("explicit ABC stdout", argv[1], arguments,
+			  stdout_path, stderr_path, 0) ||
+	    !file_matches(stdout_path, expected_abc) ||
+	    !file_matches(stderr_path, "")) {
+		fprintf(stderr, "ABC stdout did not match\n");
 		goto out;
 	}
 
@@ -329,11 +493,35 @@ main(int argc, char **argv)
 		goto out;
 	}
 
-	file_arguments[3] = full_output_path;
-	if (expect_status("serialization failure", argv[1], file_arguments,
+	arguments[1] = midi_path;
+	arguments[2] = lyric_path;
+	arguments[3] = full_output_path;
+	arguments[4] = NULL;
+	if (expect_status("IR serialization failure", argv[1], arguments,
 			  stdout_path, stderr_path, 1) ||
+	    !file_contains(stderr_path,
+			   "failed to serialize bound music IR") ||
 	    access(full_output_path, F_OK) == 0) {
-		fprintf(stderr, "failed serialization left output file\n");
+		fprintf(stderr, "failed IR serialization left output file\n");
+		goto out;
+	}
+
+	if (symlink("/dev/full", full_output_path) < 0) {
+		perror("symlink");
+		goto out;
+	}
+
+	arguments[1] = "--format";
+	arguments[2] = "abc";
+	arguments[3] = midi_path;
+	arguments[4] = lyric_path;
+	arguments[5] = full_output_path;
+	arguments[6] = NULL;
+	if (expect_status("ABC serialization failure", argv[1], arguments,
+			  stdout_path, stderr_path, 1) ||
+	    !file_contains(stderr_path, "failed to serialize ABC") ||
+	    access(full_output_path, F_OK) == 0) {
+		fprintf(stderr, "failed ABC serialization left output file\n");
 		goto out;
 	}
 
@@ -342,7 +530,8 @@ main(int argc, char **argv)
 out:
 	unlink(full_output_path);
 	unlink(failed_output_path);
-	unlink(output_path);
+	unlink(abc_output_path);
+	unlink(ir_output_path);
 	unlink(stderr_path);
 	unlink(stdout_path);
 	unlink(mismatch_path);
