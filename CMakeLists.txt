@@ -16,6 +16,16 @@ add_executable(melisma src/main.c src/melisma.c src/abc.c src/binder.c src/midi.
 target_include_directories(melisma PRIVATE ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 if(BUILD_TESTING)
+	find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
+	add_test(NAME melisma_pipeline
+		COMMAND ${Python3_EXECUTABLE} -m unittest
+			discover
+			-s ${CMAKE_CURRENT_SOURCE_DIR}/tests
+			-p test_*pipeline*.py
+			-v
+	)
+
 	add_executable(binder_test
 		tests/binder_test.c
 		src/binder.c
