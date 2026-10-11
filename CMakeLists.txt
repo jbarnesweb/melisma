@@ -58,6 +58,18 @@ if(BUILD_TESTING)
 			${CMAKE_CURRENT_BINARY_DIR}
 			${CMAKE_CURRENT_SOURCE_DIR}
 	)
+	add_executable(render_inputs_cli_test
+		tests/render_inputs_cli_test.c
+	)
+
+	add_dependencies(render_inputs_cli_test melisma)
+
+	add_test(NAME render_inputs_cli
+		COMMAND render_inputs_cli_test
+			$<TARGET_FILE:melisma>
+			${CMAKE_CURRENT_BINARY_DIR}
+			${CMAKE_CURRENT_SOURCE_DIR}
+	)
 	add_executable(ustx_test
 		tests/ustx_test.c
 		src/ustx.c
