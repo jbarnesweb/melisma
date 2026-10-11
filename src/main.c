@@ -6,13 +6,16 @@
 enum ml_output_format {
 	ML_OUTPUT_IR,
 	ML_OUTPUT_ABC,
+	ML_OUTPUT_USTX,
 };
 
 static void
 ml_print_usage(const char *program)
 {
 	fprintf(stderr,
-		"usage: %s [--format ir|abc] MIDI_FILE LYRIC_FILE [OUTPUT_FILE]\n",
+		"usage: %s [--format ir|abc|ustx] [--singer NAME] "
+		"[--phonemizer CLASS] [--renderer NAME] "
+		"MIDI_FILE LYRIC_FILE [OUTPUT_FILE]\n",
 		program);
 }
 
@@ -21,8 +24,29 @@ ml_serialization_error(enum ml_output_format format)
 {
 	if (format == ML_OUTPUT_ABC)
 		return "failed to serialize ABC";
+	if (format == ML_OUTPUT_USTX)
+		return "failed to serialize USTX";
 
 	return "failed to serialize bound music IR";
+}
+
+static int
+ml_serialize(FILE *output,
+	     enum ml_output_format format,
+	     const struct ml_note_sequence *notes,
+	     const struct ml_binding_sequence *bindings,
+	     const struct ml_ustx_config *ustx_config)
+{
+	switch (format) {
+	case ML_OUTPUT_IR:
+		return ml_write_bound_ir(output, notes, bindings);
+	case ML_OUTPUT_ABC:
+		return ml_write_abc(output, notes);
+	case ML_OUTPUT_USTX:
+		return ml_write_ustx(output, notes, bindings, ustx_config);
+	}
+
+	return -1;
 }
 
 int
@@ -31,6 +55,7 @@ main(int argc, char **argv)
 	struct ml_binding_sequence bindings;
 	struct ml_note_sequence notes = { 0 };
 	struct ml_phrase phrase;
+	struct ml_ustx_config ustx_config = { "", "", "" };
 	const char *midi_path;
 	const char *lyric_path;
 	const char *output_path;
@@ -40,28 +65,63 @@ main(int argc, char **argv)
 	FILE *output = NULL;
 	enum ml_output_format format = ML_OUTPUT_IR;
 	int bindings_initialized = 0;
+	int format_seen = 0;
 	int output_failed = 0;
+	int phonemizer_seen = 0;
 	int positional_count;
+	int renderer_seen = 0;
+	int singer_seen = 0;
 	int status = 1;
 	int i;
 
 	i = 1;
-	if (i < argc && strcmp(argv[i], "--format") == 0) {
-		if (i + 1 >= argc) {
+	while (i < argc && argv[i][0] == '-') {
+		const char *value;
+
+		if (i + 1 >= argc || !argv[i + 1][0] ||
+		    argv[i + 1][0] == '-') {
 			ml_print_usage(argv[0]);
 			return 2;
 		}
+		value = argv[i + 1];
 
-		if (strcmp(argv[i + 1], "ir") == 0) {
-			format = ML_OUTPUT_IR;
-		} else if (strcmp(argv[i + 1], "abc") == 0) {
-			format = ML_OUTPUT_ABC;
+		if (strcmp(argv[i], "--format") == 0) {
+			if (format_seen) {
+				ml_print_usage(argv[0]);
+				return 2;
+			}
+			format_seen = 1;
+
+			if (strcmp(value, "ir") == 0) {
+				format = ML_OUTPUT_IR;
+			} else if (strcmp(value, "abc") == 0) {
+				format = ML_OUTPUT_ABC;
+			} else if (strcmp(value, "ustx") == 0) {
+				format = ML_OUTPUT_USTX;
+			} else {
+				ml_print_usage(argv[0]);
+				return 2;
+			}
+		} else if (strcmp(argv[i], "--singer") == 0 && !singer_seen) {
+			ustx_config.singer = value;
+			singer_seen = 1;
+		} else if (strcmp(argv[i], "--phonemizer") == 0 &&
+			   !phonemizer_seen) {
+			ustx_config.phonemizer = value;
+			phonemizer_seen = 1;
+		} else if (strcmp(argv[i], "--renderer") == 0 &&
+			   !renderer_seen) {
+			ustx_config.renderer = value;
+			renderer_seen = 1;
 		} else {
 			ml_print_usage(argv[0]);
 			return 2;
 		}
 		i += 2;
-	} else if (i < argc && argv[i][0] == '-') {
+	}
+
+	if ((singer_seen || phonemizer_seen || renderer_seen) &&
+	    format != ML_OUTPUT_USTX) {
 		ml_print_usage(argv[0]);
 		return 2;
 	}
@@ -128,9 +188,7 @@ main(int argc, char **argv)
 		output = stdout;
 	}
 
-	if ((format == ML_OUTPUT_ABC ?
-	     ml_write_abc(output, &notes) :
-	     ml_write_bound_ir(output, &notes, &bindings)) < 0 ||
+	if (ml_serialize(output, format, &notes, &bindings, &ustx_config) < 0 ||
 	    fflush(output) == EOF) {
 		fprintf(stderr, "%s\n", serialization_error);
 		output_failed = 1;

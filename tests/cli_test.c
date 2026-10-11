@@ -40,12 +40,101 @@ static const char expected_abc[] =
 	"V: Vocal clef=treble name=\"Vocal Melody\" snm=\"Vocal\"\n"
 	"V: Ins clef=treble name=\"Ins Melody\" snm=\"Inst.\"\n"
 	"K:C\n"
-	"\n"
 	"V: Vocal\n"
-	"=C8 =D8 =E8 =F8 | =G8\n"
-	"\n"
+	"=C8 =D8 =E8 =F8 | =G8 z24 |\n"
 	"V: Ins\n"
-	"z32 | z8\n";
+	"Z2 |\n";
+
+static const char expected_ustx[] =
+	"name: Melisma\n"
+	"comment: \"\"\n"
+	"ustx_version: \"0.7\"\n"
+	"resolution: 480\n"
+	"bpm: 120\n"
+	"beat_per_bar: 4\n"
+	"beat_unit: 4\n"
+	"time_signatures:\n"
+	"- bar_position: 0\n"
+	"  beat_per_bar: 4\n"
+	"  beat_unit: 4\n"
+	"tempos:\n"
+	"- position: 0\n"
+	"  bpm: 120\n"
+	"tracks:\n"
+	"- singer: \"\"\n"
+	"  phonemizer: \"\"\n"
+	"  renderer_settings:\n"
+	"    renderer: \"\"\n"
+	"  track_name: Track1\n"
+	"voice_parts:\n"
+	"- duration: 2400\n"
+	"  name: New Part\n"
+	"  comment: \"\"\n"
+	"  track_no: 0\n"
+	"  position: 0\n"
+	"  notes:\n"
+	"  - position: 0\n"
+	"    duration: 480\n"
+	"    tone: 60\n"
+	"    lyric: \"Glo\"\n"
+	"    pitch:\n"
+	"      data:\n"
+	"      - {x: -40, y: 0, shape: io}\n"
+	"      - {x: 40, y: 0, shape: io}\n"
+	"      snap_first: true\n"
+	"    vibrato: {length: 0, period: 175, depth: 25, in: 10, out: 10, shift: 0, drift: 0, vol_link: 0}\n"
+	"    phoneme_expressions: []\n"
+	"    phoneme_overrides: []\n"
+	"  - position: 480\n"
+	"    duration: 480\n"
+	"    tone: 62\n"
+	"    lyric: \"ri\"\n"
+	"    pitch:\n"
+	"      data:\n"
+	"      - {x: -40, y: 0, shape: io}\n"
+	"      - {x: 40, y: 0, shape: io}\n"
+	"      snap_first: true\n"
+	"    vibrato: {length: 0, period: 175, depth: 25, in: 10, out: 10, shift: 0, drift: 0, vol_link: 0}\n"
+	"    phoneme_expressions: []\n"
+	"    phoneme_overrides: []\n"
+	"  - position: 960\n"
+	"    duration: 480\n"
+	"    tone: 64\n"
+	"    lyric: \"a\"\n"
+	"    pitch:\n"
+	"      data:\n"
+	"      - {x: -40, y: 0, shape: io}\n"
+	"      - {x: 40, y: 0, shape: io}\n"
+	"      snap_first: true\n"
+	"    vibrato: {length: 0, period: 175, depth: 25, in: 10, out: 10, shift: 0, drift: 0, vol_link: 0}\n"
+	"    phoneme_expressions: []\n"
+	"    phoneme_overrides: []\n"
+	"  - position: 1440\n"
+	"    duration: 480\n"
+	"    tone: 65\n"
+	"    lyric: \"+\"\n"
+	"    pitch:\n"
+	"      data:\n"
+	"      - {x: -40, y: 0, shape: io}\n"
+	"      - {x: 40, y: 0, shape: io}\n"
+	"      snap_first: true\n"
+	"    vibrato: {length: 0, period: 175, depth: 25, in: 10, out: 10, shift: 0, drift: 0, vol_link: 0}\n"
+	"    phoneme_expressions: []\n"
+	"    phoneme_overrides: []\n"
+	"  - position: 1920\n"
+	"    duration: 480\n"
+	"    tone: 67\n"
+	"    lyric: \"+\"\n"
+	"    pitch:\n"
+	"      data:\n"
+	"      - {x: -40, y: 0, shape: io}\n"
+	"      - {x: 40, y: 0, shape: io}\n"
+	"      snap_first: true\n"
+	"    vibrato: {length: 0, period: 175, depth: 25, in: 10, out: 10, shift: 0, drift: 0, vol_link: 0}\n"
+	"    phoneme_expressions: []\n"
+	"    phoneme_overrides: []\n"
+	"  curves: []\n"
+	"wave_parts: []\n";
 
 static int
 write_file(const char *path, const void *data, size_t length)
@@ -75,7 +164,7 @@ write_file(const char *path, const void *data, size_t length)
 static int
 file_matches(const char *path, const char *expected)
 {
-	char data[1024];
+	char data[8192];
 	FILE *input;
 	size_t length;
 	int extra;
@@ -213,16 +302,21 @@ main(int argc, char **argv)
 	char mismatch_path[1024] = "";
 	char ir_output_path[1024] = "";
 	char abc_output_path[1024] = "";
+	char ustx_output_path[1024] = "";
+	char example_midi_path[1024] = "";
+	char example_lyric_path[1024] = "";
 	char stdout_path[1024] = "";
 	char stderr_path[1024] = "";
 	char failed_output_path[1024] = "";
 	char full_output_path[1024] = "";
 	char missing_path[1024] = "";
-	char *arguments[9];
+	char *arguments[16];
 	int ret = 1;
 
-	if (argc != 3) {
-		fprintf(stderr, "usage: %s MELISMA BUILD_DIRECTORY\n", argv[0]);
+	if (argc != 4) {
+		fprintf(stderr,
+			"usage: %s MELISMA BUILD_DIRECTORY SOURCE_DIRECTORY\n",
+			argv[0]);
 		return 1;
 	}
 
@@ -247,6 +341,7 @@ main(int argc, char **argv)
 	MAKE_PATH(mismatch_path, "mismatch.txt");
 	MAKE_PATH(ir_output_path, "output.jsonl");
 	MAKE_PATH(abc_output_path, "output.abc");
+	MAKE_PATH(ustx_output_path, "output.ustx");
 	MAKE_PATH(stdout_path, "stdout.txt");
 	MAKE_PATH(stderr_path, "stderr.txt");
 	MAKE_PATH(failed_output_path, "failed.jsonl");
@@ -254,6 +349,12 @@ main(int argc, char **argv)
 	MAKE_PATH(missing_path, "missing");
 
 #undef MAKE_PATH
+
+	if (path_join(example_midi_path, sizeof(example_midi_path),
+		      argv[3], "examples/five-notes.mid") < 0 ||
+	    path_join(example_lyric_path, sizeof(example_lyric_path),
+		      argv[3], "examples/gloria.txt") < 0)
+		goto out;
 
 	if (write_file(midi_path, midi_data, sizeof(midi_data)) < 0 ||
 	    write_file(lyric_path, "Glo - ri - a -- --\n",
@@ -305,6 +406,80 @@ main(int argc, char **argv)
 	arguments[3] = lyric_path;
 	arguments[4] = NULL;
 	if (expect_status("unknown option", argv[1], arguments,
+			  stdout_path, stderr_path, 2) ||
+	    !file_contains(stderr_path, "usage:"))
+		goto out;
+
+	arguments[1] = "--singer";
+	arguments[2] = "TIGER_DS_v102";
+	arguments[3] = midi_path;
+	arguments[4] = lyric_path;
+	arguments[5] = NULL;
+	if (expect_status("USTX option with IR", argv[1], arguments,
+			  stdout_path, stderr_path, 2) ||
+	    !file_contains(stderr_path, "usage:"))
+		goto out;
+
+	arguments[1] = "--format";
+	arguments[2] = "abc";
+	arguments[3] = "--renderer";
+	arguments[4] = "DIFFSINGER";
+	arguments[5] = midi_path;
+	arguments[6] = lyric_path;
+	arguments[7] = NULL;
+	if (expect_status("USTX option with ABC", argv[1], arguments,
+			  stdout_path, stderr_path, 2) ||
+	    !file_contains(stderr_path, "usage:"))
+		goto out;
+
+	arguments[1] = "--format";
+	arguments[2] = "ustx";
+	arguments[3] = "--singer";
+	arguments[4] = NULL;
+	if (expect_status("missing singer value", argv[1], arguments,
+			  stdout_path, stderr_path, 2) ||
+	    !file_contains(stderr_path, "usage:"))
+		goto out;
+
+	arguments[3] = "--phonemizer";
+	if (expect_status("missing phonemizer value", argv[1], arguments,
+			  stdout_path, stderr_path, 2) ||
+	    !file_contains(stderr_path, "usage:"))
+		goto out;
+
+	arguments[3] = "--renderer";
+	if (expect_status("missing renderer value", argv[1], arguments,
+			  stdout_path, stderr_path, 2) ||
+	    !file_contains(stderr_path, "usage:"))
+		goto out;
+
+	arguments[3] = "--singer";
+	arguments[4] = "";
+	arguments[5] = midi_path;
+	arguments[6] = lyric_path;
+	arguments[7] = NULL;
+	if (expect_status("empty singer value", argv[1], arguments,
+			  stdout_path, stderr_path, 2) ||
+	    !file_contains(stderr_path, "usage:"))
+		goto out;
+
+	arguments[4] = "--renderer";
+	arguments[5] = "DIFFSINGER";
+	arguments[6] = midi_path;
+	arguments[7] = lyric_path;
+	arguments[8] = NULL;
+	if (expect_status("malformed singer value", argv[1], arguments,
+			  stdout_path, stderr_path, 2) ||
+	    !file_contains(stderr_path, "usage:"))
+		goto out;
+
+	arguments[4] = "first";
+	arguments[5] = "--singer";
+	arguments[6] = "second";
+	arguments[7] = midi_path;
+	arguments[8] = lyric_path;
+	arguments[9] = NULL;
+	if (expect_status("duplicate singer option", argv[1], arguments,
 			  stdout_path, stderr_path, 2) ||
 	    !file_contains(stderr_path, "usage:"))
 		goto out;
@@ -488,6 +663,65 @@ main(int argc, char **argv)
 		goto out;
 	}
 
+	arguments[1] = "--format";
+	arguments[2] = "ustx";
+	arguments[3] = example_midi_path;
+	arguments[4] = example_lyric_path;
+	arguments[5] = ustx_output_path;
+	arguments[6] = NULL;
+	if (expect_status("Gloria USTX file", argv[1], arguments,
+			  stdout_path, stderr_path, 0) ||
+	    !file_matches(ustx_output_path, expected_ustx) ||
+	    !file_matches(stderr_path, "")) {
+		fprintf(stderr, "Gloria USTX output did not match\n");
+		goto out;
+	}
+
+	arguments[1] = "--format";
+	arguments[2] = "ustx";
+	arguments[3] = "--singer";
+	arguments[4] = "TIGER_DS_v102";
+	arguments[5] = "--phonemizer";
+	arguments[6] =
+		"OpenUtau.Core.DiffSinger.DiffSingerARPAPlusEnglishPhonemizer";
+	arguments[7] = "--renderer";
+	arguments[8] = "DIFFSINGER";
+	arguments[9] = example_midi_path;
+	arguments[10] = example_lyric_path;
+	arguments[11] = ustx_output_path;
+	arguments[12] = NULL;
+	if (expect_status("configured TIGER USTX", argv[1], arguments,
+			  stdout_path, stderr_path, 0) ||
+	    !file_contains(ustx_output_path,
+			   "singer: \"TIGER_DS_v102\"") ||
+	    !file_contains(
+		    ustx_output_path,
+		    "phonemizer: \"OpenUtau.Core.DiffSinger.DiffSingerARPAPlusEnglishPhonemizer\"") ||
+	    !file_contains(ustx_output_path,
+			   "renderer: \"DIFFSINGER\"") ||
+	    !file_contains(ustx_output_path, "lyric: \"Glo\"") ||
+	    !file_contains(ustx_output_path, "phoneme_overrides: []") ||
+	    !file_matches(stderr_path, "")) {
+		fprintf(stderr, "configured TIGER USTX output did not match\n");
+		goto out;
+	}
+
+	arguments[4] = "Tiger: \"A\"\\B";
+	arguments[6] = "Class\nName";
+	arguments[8] = "#world";
+	if (expect_status("escaped USTX options", argv[1], arguments,
+			  stdout_path, stderr_path, 0) ||
+	    !file_contains(ustx_output_path,
+			   "singer: \"Tiger: \\\"A\\\"\\\\B\"") ||
+	    !file_contains(ustx_output_path,
+			   "phonemizer: \"Class\\nName\"") ||
+	    !file_contains(ustx_output_path,
+			   "renderer: \"#world\"") ||
+	    !file_matches(stderr_path, "")) {
+		fprintf(stderr, "escaped USTX option output did not match\n");
+		goto out;
+	}
+
 	if (symlink("/dev/full", full_output_path) < 0) {
 		perror("symlink");
 		goto out;
@@ -531,6 +765,7 @@ out:
 	unlink(full_output_path);
 	unlink(failed_output_path);
 	unlink(abc_output_path);
+	unlink(ustx_output_path);
 	unlink(ir_output_path);
 	unlink(stderr_path);
 	unlink(stdout_path);

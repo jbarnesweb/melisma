@@ -13,8 +13,7 @@ static const char abc_header[] =
 	"Q:1/4=120\n"
 	"V: Vocal clef=treble name=\"Vocal Melody\" snm=\"Vocal\"\n"
 	"V: Ins clef=treble name=\"Ins Melody\" snm=\"Inst.\"\n"
-	"K:C\n"
-	"\n";
+	"K:C\n";
 
 static int
 output_matches(FILE *output, const char *expected)
@@ -37,21 +36,12 @@ output_matches(FILE *output, const char *expected)
 }
 
 static int
-expect_output(const char *name,
-	      const struct ml_note_sequence *notes,
-	      const char *vocal,
-	      const char *instrument)
+expect_exact_output(const char *name,
+		    const struct ml_note_sequence *notes,
+		    const char *expected)
 {
-	char expected[2048];
 	FILE *output;
-	int length;
 	int ret = 1;
-
-	length = snprintf(expected, sizeof(expected),
-			  "%sV: Vocal\n%s\n\nV: Ins\n%s\n",
-			  abc_header, vocal, instrument);
-	if (length < 0 || (size_t)length >= sizeof(expected))
-		return 1;
 
 	output = tmpfile();
 	if (!output) {
@@ -77,6 +67,24 @@ out:
 }
 
 static int
+expect_output(const char *name,
+	      const struct ml_note_sequence *notes,
+	      const char *vocal,
+	      const char *instrument)
+{
+	char expected[2048];
+	int length;
+
+	length = snprintf(expected, sizeof(expected),
+			  "%sV: Vocal\n%s\nV: Ins\n%s\n",
+			  abc_header, vocal, instrument);
+	if (length < 0 || (size_t)length >= sizeof(expected))
+		return 1;
+
+	return expect_exact_output(name, notes, expected);
+}
+
+static int
 test_five_notes(void)
 {
 	struct ml_note notes_data[] = {
@@ -93,8 +101,8 @@ test_five_notes(void)
 	};
 
 	return expect_output("five notes", &notes,
-			     "=C8 =D8 =E8 =F8 | =G8",
-			     "z32 | z8");
+			     "=C8 =D8 =E8 =F8 | =G8 z24 |",
+			     "Z2 |");
 }
 
 static int
@@ -120,19 +128,19 @@ test_rests_and_bars(void)
 	};
 
 	if (expect_output("rest between notes", &notes,
-			  "=C8 z8 =D8", "z24"))
+			  "=C8 z8 =D8 z8 |", "Z |"))
 		return 1;
 
 	notes.notes = &crossing_note;
 	notes.count = 1;
 	if (expect_output("note crossing bar", &notes,
-			  "z24 =C8- | =C8", "z32 | z8"))
+			  "z24 =C8- | =C8 z24 |", "Z2 |"))
 		return 1;
 
 	notes.notes = crossing_rest;
 	notes.count = 2;
 	if (expect_output("rest crossing bar", &notes,
-			  "=C8 z24 | z8 =D8", "z32 | z16"))
+			  "=C8 z24 | z8 =D8 z16 |", "Z2 |"))
 		return 1;
 
 	return 0;
@@ -157,8 +165,8 @@ test_pitch_spelling(void)
 	};
 
 	return expect_output("pitch spelling", &notes,
-			     "=B,1 =C1 ^C1 =B1 =c1 ^c1 =c'1",
-			     "z7");
+			     "=B,1 =C1 ^C1 =B1 =c1 ^c1 =c'1 z25 |",
+			     "Z |");
 }
 
 static int
@@ -175,7 +183,7 @@ test_accidental_cancellation(void)
 	};
 
 	return expect_output("accidental cancellation", &notes,
-			     "^C1 =C1", "z2");
+			     "^C1 =C1 z30 |", "Z |");
 }
 
 static int
@@ -202,8 +210,8 @@ test_pitch_boundaries(void)
 
 	return expect_output("pitch boundaries", &notes,
 			     "=C,,,,,1 =B,,1 =C,1 ^C,1 =B,1 =C1 ^C1 "
-			     "=B1 =c1 ^c1 =g''''1",
-			     "z11");
+			     "=B1 =c1 ^c1 =g''''1 z21 |",
+			     "Z |");
 }
 
 static int
@@ -234,25 +242,25 @@ test_bar_boundaries(void)
 	};
 
 	if (expect_output("note ending at barline", &notes,
-			  "=C32 |", "z32 |"))
+			  "=C32 |", "Z |"))
 		return 1;
 
 	notes.notes = &starting_note;
 	if (expect_output("note starting at barline", &notes,
-			  "z32 | =C8", "z32 | z8"))
+			  "Z | =C8 z24 |", "Z2 |"))
 		return 1;
 
 	notes.notes = &long_note;
 	if (expect_output("note crossing multiple bars", &notes,
-			  "z24 =C8- | =C32- | =C32- | =C8",
-			  "z32 | z32 | z32 | z8"))
+			  "z24 =C8- | =C32- | =C32- | =C8 z24 |",
+			  "Z4 |"))
 		return 1;
 
 	notes.notes = long_rest;
 	notes.count = 2;
 	if (expect_output("rest crossing multiple bars", &notes,
-			  "=C8 z24 | z32 | z32 | z8 =D8",
-			  "z32 | z32 | z32 | z16"))
+			  "=C8 z24 | Z2 | z8 =D8 z16 |",
+			  "Z4 |"))
 		return 1;
 
 	return 0;
@@ -263,10 +271,15 @@ test_durations_and_empty(void)
 {
 	static const uint64_t units[] = { 1, 2, 4, 8, 16, 32 };
 	static const char *const vocal[] = {
-		"=C1", "=C2", "=C4", "=C8", "=C16", "=C32 |",
+		"=C1 z31 |",
+		"=C2 z30 |",
+		"=C4 z28 |",
+		"=C8 z24 |",
+		"=C16 z16 |",
+		"=C32 |",
 	};
 	static const char *const instrument[] = {
-		"z1", "z2", "z4", "z8", "z16", "z32 |",
+		"Z |", "Z |", "Z |", "Z |", "Z |", "Z |",
 	};
 	struct ml_note note = {
 		.pitch = 60,
@@ -289,12 +302,12 @@ test_durations_and_empty(void)
 	notes.notes = &note;
 	notes.count = 1;
 	if (expect_output("adjacent notes setup", &notes,
-			  "=C8", "z8"))
+			  "=C8 z24 |", "Z |"))
 		return 1;
 
 	notes.notes = NULL;
 	notes.count = 0;
-	if (expect_output("empty sequence", &notes, "", ""))
+	if (expect_output("empty sequence", &notes, "Z |", "Z |"))
 		return 1;
 
 	return 0;
@@ -314,7 +327,7 @@ test_adjacent_notes(void)
 	};
 
 	return expect_output("adjacent notes", &notes,
-			     "=C8 =D8", "z16");
+			     "=C8 =D8 z16 |", "Z |");
 }
 
 static int
@@ -332,7 +345,62 @@ test_large_timing(void)
 	};
 
 	return expect_output("large exact timing", &notes,
-			     "z16 =C8", "z24");
+			     "z16 =C8 z8 |", "Z |");
+}
+
+static int
+test_grouping(void)
+{
+	static const char *const vocal[] = {
+		"=C32 |",
+		"=C32- | =C32 |",
+		"=C32- | =C32- | =C32 |",
+		"=C32- | =C32- | =C32- | =C32 |",
+	};
+	static const char *const instrument[] = {
+		"Z |", "Z2 |", "Z3 |", "Z4 |",
+	};
+	struct ml_note note = {
+		.pitch = 60,
+	};
+	struct ml_note_sequence notes = {
+		.notes = &note,
+		.count = 1,
+		.ticks_per_quarter = 480,
+	};
+	const char *five_measure_expected =
+		"X:1\n"
+		"T:\n"
+		"M:4/4\n"
+		"L:1/32\n"
+		"Q:1/4=120\n"
+		"V: Vocal clef=treble name=\"Vocal Melody\" snm=\"Vocal\"\n"
+		"V: Ins clef=treble name=\"Ins Melody\" snm=\"Inst.\"\n"
+		"K:C\n"
+		"V: Vocal\n"
+		"=C32- | =C32- | =C32- | =C32- |\n"
+		"V: Ins\n"
+		"Z4 |\n"
+		"V: Vocal\n"
+		"=C32 |\n"
+		"V: Ins\n"
+		"Z |\n";
+	unsigned int measures;
+
+	for (measures = 1; measures <= 4; ++measures) {
+		note.duration = (uint64_t)measures * 1920;
+		if (expect_output("one-to-four measure group", &notes,
+				  vocal[measures - 1],
+				  instrument[measures - 1]))
+			return 1;
+	}
+
+	note.duration = 5 * 1920;
+	if (expect_exact_output("multiple groups", &notes,
+				five_measure_expected))
+		return 1;
+
+	return 0;
 }
 
 static int
@@ -505,6 +573,7 @@ main(void)
 	    test_durations_and_empty() ||
 	    test_adjacent_notes() ||
 	    test_large_timing() ||
+	    test_grouping() ||
 	    test_invalid_input() ||
 	    test_output_failure())
 		return 1;

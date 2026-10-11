@@ -83,6 +83,17 @@ int ml_write_bound_ir(FILE *output,
 		      const struct ml_note_sequence *notes,
 		      const struct ml_binding_sequence *bindings);
 
+struct ml_ustx_config {
+	const char *singer;
+	const char *phonemizer;
+	const char *renderer;
+};
+
+int ml_write_ustx(FILE *output,
+		  const struct ml_note_sequence *notes,
+		  const struct ml_binding_sequence *bindings,
+		  const struct ml_ustx_config *config);
+
 int ml_parse_file(FILE *input, struct ml_phrase *phrase);
 
 #endif /* MELISMA_H */
