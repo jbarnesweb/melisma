@@ -80,6 +80,31 @@ if(BUILD_TESTING)
 			${CMAKE_CURRENT_BINARY_DIR}
 			${CMAKE_CURRENT_SOURCE_DIR}
 	)
+	add_executable(timeline_regression_test
+		tests/timeline_regression_test.c
+		src/abc.c
+		src/binder.c
+		src/melisma.c
+		src/midi.c
+		src/serializer.c
+		src/ustx.c
+		${BISON_MelismaParser_OUTPUTS}
+		${FLEX_MelismaLexer_OUTPUTS}
+	)
+
+	target_include_directories(timeline_regression_test PRIVATE
+		${CMAKE_CURRENT_BINARY_DIR}
+		${CMAKE_CURRENT_SOURCE_DIR}/src
+	)
+
+	add_dependencies(timeline_regression_test melisma)
+
+	add_test(NAME timeline_regression
+		COMMAND timeline_regression_test
+			$<TARGET_FILE:melisma>
+			${CMAKE_CURRENT_BINARY_DIR}
+			${CMAKE_CURRENT_SOURCE_DIR}
+	)
 	add_executable(ustx_test
 		tests/ustx_test.c
 		src/ustx.c

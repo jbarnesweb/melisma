@@ -275,18 +275,6 @@ test_untexted_and_validation(void)
 		"  track_no: 0\n"
 		"  position: 0\n"
 		"  notes:\n"
-		"  - position: 240\n"
-		"    duration: 120\n"
-		"    tone: 48\n"
-		"    lyric: \"\"\n"
-		"    pitch:\n"
-		"      data:\n"
-		"      - {x: -40, y: 0, shape: io}\n"
-		"      - {x: 40, y: 0, shape: io}\n"
-		"      snap_first: true\n"
-		"    vibrato: {length: 0, period: 175, depth: 25, in: 10, out: 10, shift: 0, drift: 0, vol_link: 0}\n"
-		"    phoneme_expressions: []\n"
-		"    phoneme_overrides: []\n"
 		"  curves: []\n"
 		"wave_parts: []\n"))
 		goto out;

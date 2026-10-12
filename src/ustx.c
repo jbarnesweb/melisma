@@ -185,6 +185,9 @@ ml_write_ustx(FILE *output,
 		binding = &bindings->bindings[i];
 		note = binding->note;
 
+		if (binding->type == ML_BINDING_UNTEXTED)
+			continue;
+
 		if (fprintf(output,
 			    "  - position: %" PRIu64 "\n"
 			    "    duration: %" PRIu64 "\n"
@@ -207,9 +210,7 @@ ml_write_ustx(FILE *output,
 				return -1;
 			break;
 		case ML_BINDING_UNTEXTED:
-			if (fputs("\"\"", output) == EOF)
-				return -1;
-			break;
+			return -1;
 		default:
 			return -1;
 		}
