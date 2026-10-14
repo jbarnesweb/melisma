@@ -54,6 +54,38 @@ serializes the resulting note and binding sequences. The Python pipeline in
 rendering, SSH/SCP transport, YuE2 rendering and verification, optional
 piecewise timing conformance, and final FFmpeg mixing.
 
+### Local adapter substrate
+
+`tools/orchestration/` is an internal, standard-library Python adapter layer,
+separate from the remote prototype. Configure explicit executable paths and
+working directories; `build()` returns an `Operation`, and
+`execute(operation, ProcessRunner())` returns structured command, process,
+artifact, validation, and completion records. Construction and inspection of
+the adapters' `operations` surfaces do not discover or provision resources.
+
+The adapters cover Melisma IR/ABC/USTX/bundle file outputs, strict OpenUtau
+rendering, separate native YuE2 0.1.6 and pinned instrumental-helper 0.1.5
+contracts, and explicit two-input FFmpeg mixing. Audio operations require an
+explicit `AudioValidator` configured with ffprobe; mixes additionally reuse the
+prototype's clipping checks. Serializer checks recognize Melisma's emitted
+formats, not arbitrary ABC/USTX projects or installed singer renderability.
+YuE2 results require complete metadata, false ABC/semantic truncation flags,
+and valid artifact hash receipts. Native model/device settings remain explicit
+operator inputs, not readiness claims; generation commands are offline.
+
+FFplay additionally exposes `start(operation, runner)` for an owned playback
+child with `poll()`, `wait()`, and bounded `stop()`. Use it as a context manager
+to stop/reap the exact child on exit. Cancellation is not exposed for the
+generation tools, whose graceful cancellation contracts are unverified.
+There is no server, UI, public command endpoint, capability probing, or pipeline
+graph in this package. A future local server must bind to loopback by default.
+
+Run the focused, model-free tests with:
+
+```sh
+python3 -B -m unittest discover -s tests -p test_orchestration.py -v
+```
+
 ## Build
 
 The build requires CMake 3.16 or newer, a C compiler, Bison, and Flex. The

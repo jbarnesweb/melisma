@@ -26,6 +26,17 @@ if(BUILD_TESTING)
 			-v
 	)
 
+	add_test(NAME orchestration
+		COMMAND ${Python3_EXECUTABLE} -B -m unittest
+			discover
+			-s ${CMAKE_CURRENT_SOURCE_DIR}/tests
+			-p test_orchestration.py
+			-v
+	)
+	set_tests_properties(orchestration PROPERTIES
+		WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+	)
+
 	add_executable(binder_test
 		tests/binder_test.c
 		src/binder.c
