@@ -608,6 +608,111 @@ English words with continuation markers, including `ruins --`, `Glory --`,
 `rises --`, and `eternal -- --`. It exercises the longer OpenUtau/YuE2
 workflow and the manual accompaniment timing-conformance path.
 
+## Read-only capability discovery
+
+The Issue #3 API lives in `tools.orchestration` (Python 3.11+). It accepts
+explicit absolute source/executable/runtime/model paths; it does not choose or
+persist user configuration. It does not use the prototype pipeline's SSH
+preflight. Every adapter exposes `discover(service, source=None, refresh=False)`;
+omitting `source` uses only that adapter's already-configured executable/cwd.
+For example:
+
+```python
+from pathlib import Path
+from tools.orchestration import (
+    DiscoveryService, DiscoverySource, MelismaAdapter, SingerRoot,
+)
+
+root = Path("/explicit/melisma")
+service = DiscoveryService()
+adapter = MelismaAdapter(root / "build/melisma", root)
+report = adapter.discover(service)
+
+# A manual refresh always bypasses cached successes AND failures.
+reports = service.refresh((
+    DiscoverySource("melisma", root, root / "build/melisma"),
+    DiscoverySource(
+        "openutau", Path("/explicit/OpenUtau-CLI"),
+        singer_roots=(SingerRoot(Path("/authorized/OpenUtau/Singers")),),
+        references=(("phonemizer", "Example.ReferenceClass"),),
+    ),
+))
+```
+
+Constructing `SingerRoot` explicitly authorizes read-only enumeration of that
+tree, **not** its parent, preferences, additional singer paths, plugins, or cache.
+Supply `Singers` and legacy `Content/Singers` separately if both are authorized.
+The default search is one directory deep, matching the shallow loader contract;
+`recursive=True` explicitly selects deeper discovery. Directory and metadata
+symlinks are not followed. Without authorization, installed-singer discovery is
+`unauthorized`, not an empty/absent singer list. No OpenUtau executable,
+initialization, plugin loading, or rendering is invoked. Renderer lists are
+parsed from the explicitly selected source; configured/reference phonemizer
+strings and simple voicebank metadata remain unvalidated references. Complex
+YAML is not interpreted, and ambiguous singer types stay unknown.
+
+`Capability` retains source/tool/contract identity, key/value, `Provenance`,
+`Verification`, `State`, independent `Readiness`, reason, default marker, and
+small evidence fields. Source support, configuration, local candidates, and
+observed readiness are distinct. A `ready` record requires observed evidence;
+safe CLI help can establish an executable/filter/option, **not** singer/model
+render readiness. Melisma reports MIDI import, IR, ABC, USTX, and
+`render-inputs`; MIDI generation is explicitly unresolved.
+
+Native YuE2 and the instrumental helper have separate reports, cache keys,
+source parsers, interpreters, defaults, and contracts (0.1.6 versus 0.1.5).
+Pass `models_root`, `configured=(("model", "..."), ("vae", "..."))`, and/or
+explicit `environment=(("YUE2_KIT", "/absolute/kit"),)` as needed; ambient
+`YUE2_KIT`, home directories, Hugging Face caches, and remote services are not
+searched. Native parser/protocol/source metadata supplies options, generation
+defaults, device kinds, model identities, and dependency versions. Native
+`model.local`/`vae.local` records expose the local-installation axis; candidates
+also appear under the selectable `model`/`vae` keys. An explicit models root
+does not rewrite the native tool's own defaults.
+
+The helper reads its own release manifest, dependency-version contract, parser
+defaults, pinned model IDs/revisions/expected hashes, and required `YuE2-3B`
+and `YuE2-Vae` directories. Its wheel URL is metadata, never fetched. Interpreter
+queries use isolated, no-site, no-bytecode Python to inspect distribution
+metadata without importing Torch, YuE2, or plugins. Matching metadata remains a
+candidate: imports/ABI compatibility are not verified. Missing/incompatible
+packages are unavailable independently of models. GPU/driver/BF16/free-memory
+readiness remains unknown; refresh does not import Torch or perform inference.
+
+`validation_report` can point to an existing operator-selected JSON report.
+The helper also reads an existing `models-verified.json` within its explicitly
+configured models root. Historical evidence is marked `recorded`, retains its
+contents/provenance, and is **not** treated as fresh hash or GPU validation.
+Weight manifests contain declarations, not proof that installed bytes match.
+No weight files are read/hashed during refresh.
+
+FFmpeg discovery queries only version and Phase 1 filter (`volume`, `amix`,
+`volumedetect`), PCM 16-bit encoder, and WAV muxer help. Native filter defaults
+retain tool-default provenance rather than being confused with harness gain
+presets. FFplay discovery queries version and required `-nodisp`, `-autoexit`,
+`-vn`, `-i`, `-hide_banner`, and `-loglevel` options; audio-device readiness is
+not inferred. FFprobe reports its executable/version separately. Queries are
+bounded by a five-second timeout and suppress `FFREPORT` file creation.
+
+`resolve_default(report, key, previous=..., project=..., manual=...)` applies
+tool default, environment/filesystem discovery, revalidated previous
+selection, project default, then manual entry, in that order. Previous values
+must match current source/contract identity and independent current capability
+evidence; merely echoing saved configuration/reference text cannot validate
+itself. Previous selections reuse current verification/readiness, not stale
+readiness. Presets/manual fallbacks retain their own provenance and remain
+unverified configuration. With no valid selection, the result explicitly
+requests manual entry rather than inventing availability.
+
+`DiscoveryService` logs structured per-capability reasons and isolates tool
+and metadata-query failures. Its in-memory cache has a five-second TTL and
+at most 32 entries, keyed by the complete immutable input (including paths,
+contracts, authorization, references, model roots, and report paths).
+`refresh(...)`, adapter `refresh=True`, and `invalidate()` bypass or clear it;
+no persistent storage exists. `SourceKind.REMOTE` with an explicit target can
+identify future execution configurations but is never inspected/contacted by
+ordinary local refresh.
+
 ## Testing
 
 Run the local build and all configured tests:

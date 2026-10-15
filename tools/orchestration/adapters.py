@@ -11,6 +11,8 @@ from ..melisma_pipeline import (
     PipelineError, parse_volumedetect, validate_final_mix_analysis,
 )
 from .artifacts import AudioValidator, absolute, existing_input, inspect_artifact, new_output
+from .capabilities import DiscoveryReport
+from .discovery import DiscoveryService, DiscoverySource
 from .process import (
     Command,
     ExpectedArtifact,
@@ -28,6 +30,11 @@ class Adapter(Protocol):
 
     def execute(self, operation: Operation, runner: ProcessRunner) -> OperationResult: ...
 
+    def discover(
+        self, service: DiscoveryService, source: DiscoverySource | None = None, *,
+        refresh: bool = False,
+    ) -> DiscoveryReport: ...
+
 
 class ToolAdapter:
     tool = ""
@@ -39,6 +46,18 @@ class ToolAdapter:
         self.cwd = cwd.resolve()
         self.executable = absolute(executable, self.cwd)
         self.audio = audio
+
+    def discover(
+        self, service: DiscoveryService, source: DiscoverySource | None = None, *,
+        refresh: bool = False,
+    ) -> DiscoveryReport:
+        source = source or DiscoverySource(self.tool, self.cwd, self.executable)
+        if (
+            source.tool != self.tool or source.root != self.cwd
+            or source.executable != self.executable
+        ):
+            raise ValueError("discovery source must match the adapter")
+        return service.discover(source, force=refresh)
 
     def _operation(
         self,
