@@ -114,6 +114,78 @@ REJECTED = frozenset((
 ))
 
 
+def selection_match(
+    report: DiscoveryReport, selection: Capability,
+) -> Capability | None:
+    """Match current evidence, not a configured/reference echo of the selection."""
+    if selection.source != report.source:
+        return None
+    return next((
+        item for item in report.values(selection.key)
+        if item.value == selection.value and item.value is not None
+        and item.state not in REJECTED | {State.UNKNOWN}
+        and item.readiness not in (Readiness.UNAVAILABLE, Readiness.UNAUTHORIZED)
+        and item.verification in (
+            Verification.SOURCE, Verification.METADATA, Verification.OBSERVED,
+        )
+        and item.provenance not in (
+            Provenance.CONFIGURED, Provenance.REFERENCE, Provenance.PREVIOUS,
+            Provenance.PROJECT, Provenance.MANUAL,
+        )
+    ), None)
+
+
+def revalidate_selection(
+    report: DiscoveryReport, selection: Capability,
+) -> Capability:
+    """Keep the saved value/origin even when it is no longer a valid selection."""
+    match = selection_match(report, selection)
+    if match is not None:
+        return replace(
+            match, provenance=selection.provenance,
+            origin=selection.origin or selection.provenance,
+        )
+    failures = tuple(
+        item for item in report.capabilities
+        if item.state in REJECTED | {State.UNKNOWN}
+        and (item.key == selection.key and item.value in (None, selection.value)
+             or selection.key == "singer" and item.key == "installed-singers"
+             or item.key in ("discovery", "source", "package", "contract"))
+    )
+    failure = next(
+        (item for item in failures if item.state == State.UNAUTHORIZED),
+        next(iter(failures), None),
+    )
+    finite_inventory = selection.key in (
+        "renderer", "cot", "backend", "quantization", "stage", "composer",
+        "overlap-policy", "format", "operation", "device",
+    ) and any(
+        item for item in report.values(selection.key)
+        if item.provenance == Provenance.SOURCE
+        and item.verification in (Verification.SOURCE, Verification.METADATA)
+        and item.state not in REJECTED | {State.UNKNOWN}
+    )
+    enumerated_singers = selection.key == "singer" and any(
+        item.state == State.CANDIDATE for item in report.values("installed-singers")
+    )
+    state = State.UNKNOWN
+    readiness = Readiness.UNKNOWN
+    reason = "saved selection has no current validating evidence"
+    if selection.source != report.source:
+        reason = "saved source identity does not match the current source"
+    elif failure is not None:
+        state, readiness = failure.state, failure.readiness
+        reason = failure.reason or reason
+    elif finite_inventory or enumerated_singers:
+        state, readiness = State.UNAVAILABLE, Readiness.UNAVAILABLE
+        reason = "saved value is absent from the current capability inventory"
+    return replace(
+        selection, state=state, readiness=readiness,
+        verification=Verification.UNVERIFIED, reason=reason, evidence=(),
+        origin=selection.origin or selection.provenance,
+    )
+
+
 def resolve_default(
     report: DiscoveryReport, key: str, *,
     previous: Capability | None = None,
@@ -134,17 +206,7 @@ def resolve_default(
         if match is not None:
             return match
     if previous is not None and previous.source == report.source and previous.key == key:
-        match = next((
-            item for item in current if item.value == previous.value
-            and item.state != State.UNKNOWN
-            and item.verification in (
-                Verification.SOURCE, Verification.METADATA, Verification.OBSERVED,
-            )
-            and item.provenance not in (
-                Provenance.CONFIGURED, Provenance.REFERENCE, Provenance.PREVIOUS,
-                Provenance.PROJECT, Provenance.MANUAL,
-            )
-        ), None)
+        match = selection_match(report, previous)
         if match is not None:
             return replace(
                 match, provenance=Provenance.PREVIOUS,

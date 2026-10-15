@@ -86,6 +86,133 @@ Run the focused, model-free tests with:
 python3 -B -m unittest discover -s tests -p test_orchestration.py -v
 ```
 
+### Local configuration and presets
+
+`tools.orchestration.configuration` provides standard-library configuration
+and preset storage; it does not change the prototype pipeline's CLI or start
+execution. Call `save_configuration(path, Configuration(...))` and
+`load_configuration(path)` with an explicit local file path. Parents must
+already exist. The result separates the unchanged `configuration` from
+current local `reports`, revalidated source `configured` and `previous`
+selections, `presets`, and
+diagnostic `issues`. Neither loading nor validation creates workspace/output
+directories.
+
+Both document types use an indented JSON envelope:
+
+```json
+{
+  "schema_version": 1,
+  "kind": "melisma-configuration",
+  "value": {
+    "sources": [],
+    "yue2_targets": [],
+    "workspace": null,
+    "output": null,
+    "previous": [],
+    "presets": []
+  }
+}
+```
+
+Unknown fields, duplicate JSON keys, incorrect types, and unsupported versions
+fail explicitly. There is no heuristic migration. Saves validate and serialize
+before touching the destination, write a private temporary file in the same
+directory, flush/fsync/close it, then publish with `os.replace`. Write,
+serialization, and replacement failures propagate and leave the previous file
+intact; temporary files are removed. This is atomic replacement, not a
+multi-writer transaction or a power-loss durability guarantee for the parent
+directory. No locking or database is used.
+
+`sources` stores Issue #3 `DiscoverySource` records: local root, executable,
+contract/type, explicit configured/reference selections, authorized singer
+roots with their recursive policy, models root and validation-report path.
+An omitted source contract is saved as its effective Issue #3 contract identity,
+so a later change to discovery defaults cannot silently retarget saved sources.
+Melisma, OpenUtau, native/helper YuE2, ffmpeg, ffprobe, and ffplay locations are
+operator-configurable. Paths are absolute and are not expanded from `~`,
+environment variables, or home-directory defaults. The only source environment
+entry accepted is the non-secret `YUE2_KIT` path. Saving an OpenUtau singer
+root is explicit authorization for that exact tree/policy; loading never adds
+parents, other singer trees, preferences, plugins, or caches.
+
+`yue2_targets` is independent of the local YuE2 source checkout. A target has a
+stable `id`, `type`, and separate `ExecutionContract` entries for `native`
+and/or `instrumental`, each with contract/version, optional runtime,
+model/VAE identities/revisions/hashes, pinned models root, and typed generation
+defaults. Source presence does not create an execution target or prove inference
+readiness. `remote-http` requires a credential-free HTTPS `endpoint` and
+`AsyncAPI` contract/version with `job_model="async-jobs"`; optional
+service-relative submit/status/result/artifact path templates describe a
+future job API. They are operator-supplied metadata, not an implemented or
+standardized YuE2 HTTP protocol. Multiple targets and endpoint changes require
+no adapter edits. A future `local` target can also persist its separately
+selected runtime root/executable, but no execution routing is implemented here.
+
+Authentication accepts only `AuthReference("environment", "VARIABLE_NAME")`
+or `AuthReference("secret-store", "identifier")`. Optional `SSHMetadata`
+stores host/port/user/identity-file **path** for future administration, never
+SSH commands or key contents. Credential fields/structures, credential-bearing
+URLs, and recognizable embedded credentials/private keys are rejected on
+load and before writing, including in presets. Reference values are not
+resolved: secrets and identity files are never read. As with any human-readable
+configuration, do not put arbitrary secret strings in free-text identity/style
+fields; the format is not a secret store.
+
+Load-time revalidation reuses Issue #3 discovery with
+`DiscoveryService(probe=None)`: static source and explicitly authorized
+filesystem metadata only, with executable probes disabled. Disabled probes
+produce unknown readiness, not an invalid configuration. Loading performs no
+network/DNS, HTTP, SSH/SCP, provisioning, OpenUtau initialization, plugin
+loading, weight loading, inference, or rendering. Offline targets are retained
+verbatim with unknown health/readiness. Capability caches and observed readiness
+are never saved. `validate_configuration(config)` repeats the same offline
+refresh rather than accepting reports with potentially stale authorizations.
+
+`SavedSelection` retains source/key/value, provenance, and optional original
+provenance. Revalidation uses the same evidence-matching rule as Issue #3
+previous-default resolution, but never replaces a saved value with a different
+default. Missing, unauthorized, invalid, moved, and unknown values remain
+explicit with reasons. A configured/reference echo is not validating evidence.
+Source-supported renderers and metadata singer candidates are not render-ready.
+
+`save_preset(path, preset)` / `load_preset(path, config)` use the same atomic,
+versioned storage (`kind="melisma-preset"`). Presets select input paths,
+source-qualified resource selections, a stable target ID, operation,
+generation defaults, and mix settings; they contain no endpoints or output
+blobs. Loading returns `PresetValidation`, not an execution operation.
+`LoadedConfiguration.require_preset(id)` refuses missing or unvalidated
+capabilities. Target health/capability validation is intentionally deferred,
+so configured target operations remain unknown and cannot pass this guard
+merely by being saved.
+
+Create the built-in reference recipe with
+`gloria_preset(openutau=configured_openutau.identity, target_id="your-target-id")`
+and include it in `Configuration.presets` or save it separately. It restores:
+
+- `examples/five-notes.mid` and `examples/gloria.txt`, relative to the single
+  configured Melisma root (absolute preset inputs are also supported).
+- Reference TIGER_DS_v102, English+ phonemizer class, and DIFFSINGER selections.
+- Instrumental-helper operation on the selected target ID; seed 831001,
+  explicit instrumental piano/no-vocals style, agent composer, empty lyrics,
+  vocal-priority overlap policy, and offline generation. COT remains
+  score-dependent rather than forcing the native request's default.
+- Instrumental/vocal/master gains 1.0/0.5/0.707945784,
+  `duration=first`, `normalize=false`.
+
+The style is a reusable reference choice, not a recovered historical generation
+receipt. Singer/phonemizer/renderer selections retain reference provenance until
+current evidence validates them; no initialization is used to resolve English+.
+This preset does not claim sung-lyric alignment, golden WAV/USTX outputs, or
+end-to-end readiness. Issue #11 owns historical artifact reconciliation and
+authoritative output validation. No existing reference artifact is modified.
+
+Run the offline persistence tests with:
+
+```sh
+python3 -B -m unittest discover -s tests -p test_configuration.py -v
+```
+
 ## Build
 
 The build requires CMake 3.16 or newer, a C compiler, Bison, and Flex. The

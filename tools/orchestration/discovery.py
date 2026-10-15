@@ -85,6 +85,10 @@ class Probe(Protocol):
     ) -> tuple[int, str]: ...
 
 
+class MetadataProbeDisabled(ValueError):
+    pass
+
+
 def metadata_probe(
     executable: Path, arguments: tuple[str, ...], cwd: Path,
 ) -> tuple[int, str]:
@@ -124,7 +128,7 @@ def literal(node: ast.AST) -> object:
 
 
 class Collector:
-    def __init__(self, source: DiscoverySource, probe: Probe) -> None:
+    def __init__(self, source: DiscoverySource, probe: Probe | None) -> None:
         self.source = source
         self.probe = probe
         self.items: list[Capability] = []
@@ -155,6 +159,8 @@ class Collector:
     def attempt(self, key: str, action: Callable[[], None]) -> None:
         try:
             action()
+        except MetadataProbeDisabled as error:
+            self.failure(key, str(error), state=State.UNKNOWN)
         except (
             OSError, ValueError, UnicodeError, SyntaxError, KeyError, TypeError, ImportError,
             subprocess.SubprocessError,
@@ -163,6 +169,8 @@ class Collector:
 
     def query(self, arguments: tuple[str, ...], allowed: tuple[int, ...] = (0,)) -> str:
         executable = self.source.executable
+        if self.probe is None:
+            raise MetadataProbeDisabled("executable metadata probes disabled; runtime readiness unknown")
         if executable is None:
             raise ValueError("no executable/interpreter configured")
         code, output = self.probe(executable, arguments, self.source.root)
@@ -783,7 +791,7 @@ class DiscoveryService:
     """Bounded, in-memory TTL cache keyed by the ENTIRE immutable input."""
 
     def __init__(
-        self, *, probe: Probe = metadata_probe, ttl: float = 5,
+        self, *, probe: Probe | None = metadata_probe, ttl: float = 5,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         if ttl < 0:
@@ -800,6 +808,8 @@ class DiscoveryService:
             c.failure("discovery", "remote execution excluded from local refresh", state=State.UNKNOWN)
         else:
             c.configured()
+            if self.probe is None and source.executable is not None and source.tool != "openutau":
+                c.attempt("executable", c.executable_candidate)
             c.attempt("discovery", lambda: DISCOVERERS[source.tool](c))
         result = DiscoveryReport(source.identity, tuple(c.items))
         for item in result.issues:

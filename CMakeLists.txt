@@ -48,6 +48,17 @@ if(BUILD_TESTING)
 		WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 	)
 
+	add_test(NAME configuration
+		COMMAND ${Python3_EXECUTABLE} -B -m unittest
+			discover
+			-s ${CMAKE_CURRENT_SOURCE_DIR}/tests
+			-p test_configuration.py
+			-v
+	)
+	set_tests_properties(configuration PROPERTIES
+		WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+	)
+
 	add_executable(binder_test
 		tests/binder_test.c
 		src/binder.c
