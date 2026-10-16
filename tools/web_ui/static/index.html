@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Melisma workflows</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <main>
+    <h1>Melisma workflows</h1>
+    <p>Read-only UI foundation. No commands, uploads, file inspection, or
+      configuration writes. Form availability does not mean runtime readiness.</p>
+    <p id="status" role="status">Loading workflow definitions...</p>
+    <button id="refresh" type="button" disabled>Refresh configured capabilities (read-only)</button>
+    <p id="refresh-status" role="status"></p>
+    <label for="workflow">Workflow</label>
+    <select id="workflow" disabled></select>
+    <section id="details" aria-live="polite" hidden>
+      <h2 id="workflow-title"></h2>
+      <p id="availability"></p>
+      <p id="readiness"></p>
+      <section id="capabilities" aria-label="Supplied capability evidence"></section>
+      <div id="fields"></div>
+      <section id="artifacts" aria-label="Output artifacts"></section>
+    </section>
+    <section aria-label="Tool configuration preview">
+      <h2>Tool configuration (unsaved editor/preview)</h2>
+      <p>Only Issue #4 non-secret fields. Enter authentication reference names,
+        never secret contents. Configured paths and targets are not ready.
+        Edits do not change active discovery roots or authorization.</p>
+      <p>Local root/executable paths must be explicitly entered: a browser file
+        picker cannot supply a reusable absolute host path. No server filesystem browser exists.</p>
+      <p id="configuration-status" role="status"></p>
+      <div id="configuration-fields"></div>
+      <button id="validate-configuration" type="button" disabled>Validate unsaved preview (no save)</button>
+    </section>
+    <noscript>JavaScript is required to display the workflow forms.</noscript>
+  </main>
+</body>
+</html>

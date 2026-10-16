@@ -9,7 +9,7 @@ import re
 import stat
 import tempfile
 import types
-from dataclasses import dataclass, fields, is_dataclass, replace
+from dataclasses import MISSING, dataclass, field, fields, is_dataclass, replace
 from enum import Enum
 from pathlib import Path
 from typing import get_args, get_origin, get_type_hints
@@ -42,7 +42,7 @@ class AuthReference:
 @dataclass(frozen=True)
 class SSHMetadata:
     host: str
-    port: int
+    port: int = field(metadata={"minimum": 1, "maximum": 65535, "step": 1})
     user: str
     identity_file: Path | None = None
 
@@ -60,13 +60,15 @@ class AsyncAPI:
 
 @dataclass(frozen=True)
 class SamplingDefaults:
-    temperature: float | None = None
-    top_p: float | None = None
-    top_k: int | None = None
-    repetition_penalty: float | None = None
-    repetition_window: int | None = None
-    min_new_tokens: int | None = None
-    max_new_tokens: int | None = None
+    temperature: float | None = field(default=None, metadata={"minimum": 0})
+    top_p: float | None = field(
+        default=None, metadata={"minimum": 0, "maximum": 1},
+    )
+    top_k: int | None = field(default=None, metadata={"minimum": 0})
+    repetition_penalty: float | None = field(default=None, metadata={"minimum": 0})
+    repetition_window: int | None = field(default=None, metadata={"minimum": 0})
+    min_new_tokens: int | None = field(default=None, metadata={"minimum": 0})
+    max_new_tokens: int | None = field(default=None, metadata={"minimum": 0})
 
 
 @dataclass(frozen=True)
@@ -77,8 +79,8 @@ class GenerationDefaults:
     device: str | None = None
     backend: str | None = None
     quantization: str | None = None
-    budget: float | None = None
-    cfg_scale: float | None = None
+    budget: float | None = field(default=None, metadata={"exclusive_minimum": 0})
+    cfg_scale: float | None = field(default=None, metadata={"exclusive_minimum": 0})
     stage: str | None = None
     offline: bool | None = None
     composer: str | None = None
@@ -86,9 +88,9 @@ class GenerationDefaults:
     overlap_policy: str | None = None
     abc_sampling: SamplingDefaults | None = None
     semantic_sampling: SamplingDefaults | None = None
-    ode_steps: int | None = None
+    ode_steps: int | None = field(default=None, metadata={"exclusive_minimum": 0})
     ode_method: str | None = None
-    context: int | None = None
+    context: int | None = field(default=None, metadata={"exclusive_minimum": 0})
     protocol: str | None = None
 
 
@@ -142,9 +144,9 @@ class SavedSelection:
 
 @dataclass(frozen=True)
 class MixSettings:
-    instrumental_gain: float = 1.0
-    vocal_gain: float = 0.5
-    master_gain: float = 0.707945784
+    instrumental_gain: float = field(default=1.0, metadata={"exclusive_minimum": 0})
+    vocal_gain: float = field(default=0.5, metadata={"exclusive_minimum": 0})
+    master_gain: float = field(default=0.707945784, metadata={"exclusive_minimum": 0})
     duration: str = "first"
     normalize: bool = False
 
@@ -518,6 +520,48 @@ def _checked(config: Configuration) -> Configuration:
             replace(source, contract=source.identity.contract) for source in result.sources
         ),
     )
+
+
+def configuration_value(config: Configuration) -> dict[str, object]:
+    """Checked, non-secret serialization without I/O, discovery, or persistence."""
+    return _encode(_checked(config))
+
+
+def configuration_from_value(value: object) -> Configuration:
+    """Validate an editor draft using exactly the persistence model, without I/O."""
+    _nonsecret(value)
+    return _checked(_decode(Configuration, value))
+
+
+def configuration_structure(kind: type = Configuration) -> dict[str, object]:
+    """Describe the actual model for editors; never resolve paths or resources."""
+    origin, args = get_origin(kind), get_args(kind)
+    if origin is types.UnionType:
+        nonnull = next(choice for choice in args if choice is not type(None))
+        return {**configuration_structure(nonnull), "nullable": True}
+    if origin is tuple:
+        return {
+            "kind": "array",
+            "items": [configuration_structure(t) for t in args if t is not Ellipsis],
+            "repeated": args[-1] is Ellipsis,
+        }
+    if is_dataclass(kind):
+        hints = get_type_hints(kind)
+        properties = {}
+        for definition in fields(kind):
+            description = configuration_structure(hints[definition.name])
+            description.update(definition.metadata)
+            if definition.default is not MISSING:
+                description["default"] = _encode(definition.default)
+            elif definition.default_factory is not MISSING:
+                description["default"] = _encode(definition.default_factory())
+            properties[definition.name] = description
+        return {"kind": "object", "properties": properties}
+    if isinstance(kind, type) and issubclass(kind, Enum):
+        return {"kind": "text", "choices": [item.value for item in kind]}
+    if kind in (int, float):
+        return {"kind": "number", "step": 1 if kind is int else "any"}
+    return {"kind": "boolean" if kind is bool else "text"}
 
 
 def _pairs(items: list[tuple[str, object]]) -> dict[str, object]:

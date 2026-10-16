@@ -1,0 +1,18 @@
+:root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+body { margin: 0; }
+main { max-width: 52rem; margin: 2rem auto; padding: 0 1rem; }
+label { display: block; font-weight: 600; margin-top: 1rem; }
+input, select {
+  box-sizing: border-box;
+  font: inherit;
+  padding: .6rem;
+  width: 100%;
+}
+.indicator { font-size: .85rem; font-weight: normal; }
+.help { font-size: .9rem; margin-top: .4rem; }
+.unavailable { border-left: .25rem solid #b96b16; padding-left: .8rem; }
+input[type="checkbox"] { width: auto; }
+button { font: inherit; margin: .5rem .5rem .5rem 0; padding: .5rem; }
+.configuration-group { border-left: 1px solid #888; margin: 1rem 0; padding-left: 1rem; }
+#artifacts { border-top: 1px solid #888; margin-top: 2rem; }
+[hidden] { display: none !important; }

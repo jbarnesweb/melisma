@@ -77,8 +77,8 @@ FFplay additionally exposes `start(operation, runner)` for an owned playback
 child with `poll()`, `wait()`, and bounded `stop()`. Use it as a context manager
 to stop/reap the exact child on exit. Cancellation is not exposed for the
 generation tools, whose graceful cancellation contracts are unverified.
-There is no server, UI, public command endpoint, capability probing, or pipeline
-graph in this package. A future local server must bind to loopback by default.
+There is no public command endpoint or pipeline graph in this adapter package.
+The separate read-only local UI below does not invoke adapters or discovery.
 
 Run the focused, model-free tests with:
 
@@ -212,6 +212,260 @@ Run the offline persistence tests with:
 ```sh
 python3 -B -m unittest discover -s tests -p test_configuration.py -v
 ```
+
+### Read-only local workflow UI
+
+Issue #5 provides dependency-free workflow forms, capability-state display,
+explicit read-only refresh, and an **unsaved** tool-configuration editor in
+`tools/web_ui/`. It extends the existing workflow and capability projections;
+it does not implement workflow execution.
+From the repository root, start it with:
+
+```sh
+python3 -B -m tools.web_ui.server
+```
+
+Open http://127.0.0.1:8765/. Stop with Ctrl-C. To choose another port:
+
+```sh
+python3 -B -m tools.web_ui.server --port 8766
+```
+
+The standard-library HTTP server always binds to IPv4 `127.0.0.1`; there is no
+host override. Fixed GET/HEAD routes are `/`, `/style.css`, `/app.js`,
+`/api/workflows`, and `/api/ui` (editor structure/current configuration and
+same-origin request token). The only POST routes are
+`/api/capabilities/refresh` and the non-mutating `/api/configuration-preview`.
+PUT/PATCH/DELETE and other POST routes are rejected. Arbitrary file paths,
+directory listings, uploads, artifact reads, workflow execution, and
+configuration mutation/persistence endpoints are not exposed.
+This is a local development UI, not a production server.
+
+All eight workflows remain visible. Generate ABC and Generate USTX have
+available **forms**, not execution actions or runtime-readiness claims. Both
+require an existing compatible MIDI selection, a Melisma lyric-file selection,
+and output-filename metadata. MIDI uses a browser file picker restricted by
+`.mid,.midi` hints; lyrics uses `.txt`. These hints do not establish compatibility:
+MIDI still requires format 0, one track, positive PPQN, and monophonic,
+non-overlapping notes. Selection reads only the browser-supplied filename, not
+the contents; no file is uploaded, parsed, validated, served, or created.
+Browsers do **not** reveal a reusable absolute host path. The UI explicitly
+records that limitation and never converts a filename or fake browser path
+into a backend input path. Issue #6 owns the separately authorized local-path
+handoff before execution. Output selection is filename metadata, not a save
+dialog, filesystem handle, or permission to write. No currently implemented
+workflow form requires a directory, so no directory picker or invented directory
+field is added; explicit configuration roots remain manually entered host paths.
+Switching workflows removes irrelevant fields. Text/filename metadata is kept
+only in browser memory; file selections must be reselected after switching.
+USTX's optional singer/phonemizer/renderer text fields default to empty and
+carry configured/manual, unverified provenance. Reported values may be offered
+alongside manual entry, but no resource choices or defaults are fabricated.
+
+`workflow_definitions(configuration=None, *, reports=())` and
+`workflow_document(configuration=None, *, reports=())` reuse the adapter's
+operation surface and the existing Issue #3 `Capability`, `DiscoveryReport`,
+state/readiness/verification/provenance, and source-identity types. Python
+callers may optionally supply an existing in-memory `Configuration`; its
+explicitly configured OpenUtau strings are exposed as source-qualified `SavedSelection`
+metadata, not defaults or discovered/validated resources. Neither function
+runs discovery, classifies capabilities, resolves defaults, loads configuration
+from disk, or saves anything. This does not duplicate Issue #3 refresh or
+Issue #4 storage.
+
+Supply **already-produced** `DiscoveryReport` records explicitly as a tuple:
+
+```python
+from tools.web_ui.workflows import workflow_definitions, workflow_document
+from tools.web_ui.server import create_server
+
+# existing_reports is a tuple of records previously supplied by your caller.
+forms = workflow_definitions(reports=existing_reports)
+document = workflow_document(reports=existing_reports)
+server = create_server(port=8765, reports=existing_reports)
+try:
+    server.serve_forever()
+finally:
+    server.server_close()
+```
+
+Startup serializes the supplied document without discovery or filesystem scans.
+Ordinary GET/HEAD requests serve snapshots. The CLI/default server supplies no
+reports or configuration and stays offline. To refresh, explicitly click
+**Refresh configured capabilities (read-only)**. With no configured sources,
+it reports that no paths were scanned.
+
+For a configured server, pass the existing Issue #4 `Configuration` as
+`create_server(port=8765, configuration=config, reports=existing_reports)`.
+Configuration is structurally/non-secret validated at startup, without local
+availability checks, discovery, or remote contacts. To obtain a configuration
+from storage, callers can use Issue #4's `load_configuration(path)` separately;
+that load has its own documented offline revalidation boundary, not an implicit
+UI startup operation.
+
+The refresh boundary is separately injectable:
+`create_server(..., refresh=read_only_refresh_callable)`. Its sole argument is
+the exact configured `tuple[DiscoverySource, ...]`; its result must be a complete
+tuple of reports with those source identities and source-matching capabilities.
+The production boundary `refresh_capabilities(sources)` calls
+`DiscoveryService(probe=None).refresh(sources)` explicitly. Executable probes
+(even help/version) are disabled. The UI adds no roots, scans no parent/default
+singer directories, and never uses execution-target metadata for discovery.
+Only Issue #3's read-only metadata implementation inspects the configured
+sources and explicitly authorized singer roots. Remote targets are not contacted.
+
+Refresh POSTs require the UI's same-origin token, exact loopback Host, JSON
+content type, and an empty object body. Cross-origin, malformed, oversized,
+ambiguous-framing, and concurrent requests are rejected (403, 400, or 409).
+A nonblocking refresh lock prevents overlapping discovery; GETs remain responsive.
+Returned reports **replace** stale reports, including failures. Native YuE2
+and pinned-helper reports retain distinct source/contract identities.
+Boundary failures replace old evidence with explicit error/unknown-readiness
+reports, not an empty success; per-source discovery failures retain their reasons.
+Request/transport failures are displayed as failures with potentially stale
+evidence, never as refreshed readiness.
+
+Each workflow displays reports for its relevant tool sources. Each capability
+retains its exact value, state, readiness, provenance, verification, reason,
+default marker, source identity, origin, and evidence through JSON projection.
+`UNKNOWN`, `UNAVAILABLE`, `UNAUTHORIZED`, `ERROR`, and `UNRESOLVED` remain
+distinct and retain their original reasons. Empty/absent reports are shown as
+unsupplied evidence with unknown readiness, not failed validation.
+
+**Form availability and runtime readiness are independent.** Workflow runtime
+readiness remains unknown because this UI does not perform aggregate workflow
+validation. Individual capability state and readiness are displayed separately:
+`SUPPORTED`, `CONFIGURED`, `CANDIDATE`, a nonempty value, or a default marker
+does not imply readiness. A capability is displayed as ready only when its
+existing record contains `State.READY`, `Readiness.READY`, and the
+`Verification.OBSERVED` required by Issue #3's capability model. The UI does
+not promote or reclassify any record.
+
+For USTX singer/phonemizer/renderer fields, matching OpenUtau report records
+with a value are offered in an optional **Reported values** selector. Each
+choice shows its original state, readiness, provenance, verification, reason,
+default marker, and source identity; records without a value remain visible
+in the report display. Choosing a value copies text into the existing editable
+field only. Manual/configured text remains possible, defaults stay empty, and
+the report's default marker never automatically selects a resource. Configured,
+manual, reference, previous-selection, and project-default provenance remain
+visibly distinct from source/filesystem provenance; verification is an
+independent label, not a provenance rewrite. Configured strings not present in
+reports remain separate metadata, not fabricated report choices.
+Selecting or editing text performs no discovery or runtime validation and changes
+no readiness label. Declarative singer-dependent phonemizer/renderer choices
+are recomputed from already supplied evidence on parent changes.
+Only source-qualified singer metadata and Issue #3's explicit `singer_type`
+or singer/file association can filter choices; singer-type case normalization
+matches Issue #4's existing validation contract. Missing metadata, manual parent
+text, cross-source evidence, and unsupported/unverified relations retain choices
+with explicit unknown/unverified dependency state. No string/name similarity,
+model/VAE pairing, or runtime/target compatibility is inferred.
+
+The **Tool configuration (unsaved editor/preview)** section is generated from
+Issue #4's dataclass/type/default/constraint structure, not a JavaScript copy of
+the schema. It can edit sources/executables (Melisma, OpenUtau, YuE2, ffmpeg,
+ffprobe, ffplay), exact authorized singer roots/traversal policy, separate YuE2
+targets and native/instrumental contracts/runtime/model identities, workspace/
+output roots, and non-secret authentication references. Add/remove controls
+edit configured collections; optional-value controls preserve null/unset state.
+Configured fields remain unverified with unknown readiness, not installed or
+ready, and editing a root does not authorize a scan.
+
+Real boolean selections (such as singer-root recursion, offline/empty-lyrics
+settings, and preset normalization) render as checkboxes. No boolean or numeric
+generation fields are invented for the Melisma ABC/USTX forms. Numeric controls
+use Issue #4's bounds: administrative SSH ports 1..65535, sampling `top_p` 0..1,
+other sampling settings nonnegative, and existing positive-only generation/mix
+settings. Integer types use step 1; unconstrained floating-point increments use
+`step=any`. Exclusive lower bounds use custom validity, not fabricated epsilon
+values. Unknown upper/lower bounds (including seed ranges) remain absent, with
+explanatory text; existing model defaults are preserved rather than invented.
+
+**Validate unsaved preview (no save)** sends only the configuration draft,
+never selected file contents. Issue #4's `configuration_from_value()` /
+`configuration_value()` boundaries reuse its exact structural, semantic,
+non-secret validation without discovery, path scanning, writes, or remote
+contacts. The response reports validation status without echoing submitted
+values or credential-bearing error text; bodies are not logged. Credential
+fields/contents prohibited by Issue #4 are rejected. Authentication fields
+request reference names only, never passwords, tokens, API keys, or key contents.
+The editor does not resolve secret references.
+
+Preview edits are **not saved or applied**: active discovery sources, singer
+authorizations, configuration snapshots, and reports remain unchanged.
+The remaining persistence integration is an explicitly selected destination and
+an authorized call to Issue #4 `save_configuration(path, config)` (which already
+validates and writes atomically), followed by deliberate activation of the new
+configuration. There is no second persistence format or ad hoc JSON writer.
+Persistence remains owned by Issue #4, not an implied UI save.
+
+Generate MIDI is unresolved/deferred: current Melisma consumes an existing
+compatible MIDI file and does not generate MIDI. Render Vocals, Generate YuE2
+Audio, Mix Audio, Play Audio, and Full Pipeline show explicit UI integration/
+validation/lifecycle dependency reasons. YuE2's native song and pinned
+instrumental contracts remain separate future integrations. Existing adapters
+and the experimental pipeline are not executed by this UI.
+
+ABC output is modeled as an inspectable `abc` artifact tied to the output-path
+field, compatible with orchestration's `ExpectedArtifact` record. Raw-text
+inspection and a rendered musical-score view have explicit future/unavailable
+metadata. Neither view reads an artifact in this slice; score rendering has
+no implementation, executable action, or rendering dependency.
+
+There are no command previews, workflow submission actions, configuration
+writes, remote contacts, runtime/model loading, audio operations, or new
+dependencies. Only an explicit capability refresh can perform Issue #3's
+configured, read-only local metadata scans; its transient cache is not persisted.
+
+Run the focused tests and the complete existing Python suite from the root:
+
+```sh
+python3 -B -m unittest discover -s tests -p test_web_ui.py -v
+python3 -B -m unittest discover -s tests -p 'test_*.py' -v
+ctest --test-dir build --output-on-failure
+git diff --check
+```
+
+The focused suite includes live loopback HTTP, pure model, refresh-injection/
+authorization/concurrency, and browser-control/dependency-event tests.
+The latter use the already installed GJS runtime when present (otherwise that
+one test is explicitly skipped); no JavaScript runtime/package is installed.
+
+#### Issue #5 task and acceptance audit
+
+Audited against the actual issue tasks and acceptance criteria. "Satisfied"
+means UI behavior, not execution or validated runtime readiness.
+
+| Issue task | Status and implementation boundary |
+| --- | --- |
+| Workflow selector | Satisfied: all eight workflows remain selectable/inspectable. |
+| Enable applicable fields | Satisfied: ABC/USTX forms expose only their applicable inputs. |
+| Disable/hide irrelevant fields | Satisfied: switching workflows replaces irrelevant controls. |
+| Required/optional state | Satisfied: labels and field metadata preserve both. |
+| Discovered selectors with provenance/verification | Satisfied: original reports/records remain separate from manual/configured text. |
+| Boolean controls | Satisfied: real Issue #4 boolean fields only; no such Melisma form field currently exists. |
+| Numeric constraints | Satisfied: model bounds/steps are preserved, unknown bounds are absent and explained. |
+| File/directory controls | Satisfied for MIDI/lyrics/output metadata; directory picker not applicable because no implemented workflow form requires a directory. Configured host roots remain explicit text. |
+| Existing compatible MIDI selection/import | Satisfied: local file selection with compatibility explanation; no content read/upload or fabricated host path. |
+| Unsupported/unresolved controls with reasons | Satisfied: unavailable workflows remain visible with reasons; no fabricated defaults. |
+| Separate native/pinned YuE2 modes | Satisfied: source reports and configured operation/runtime contracts remain separate; execution deferred to #9. |
+| Supported/unknown/unavailable capability states | Satisfied: original State/Readiness axes and reasons are preserved and displayed. |
+| No fabricated installed OpenUtau choices | Satisfied: manual/configured/reference values and reported candidates retain their actual evidence labels. |
+| Refresh dependent fields | Satisfied for explicit same-source singer metadata; unknown relations retain choices. Model/target-dependent workflow controls are not applicable because no such implemented form exists; later integration belongs to #9/#10. |
+| Read-only capability refresh | Satisfied: injected Issue #3 boundary, configured sources only, guarded POST, replacing snapshots and explicit errors. |
+| Tool configuration section | Satisfied: Issue #4-generated editor with pure model validation; explicitly unsaved preview, persistence owned by #4. |
+
+| Issue acceptance criterion | Status |
+| --- | --- |
+| Workflow changes update inputs | Satisfied. |
+| Dynamic controls reflect capabilities, including unknown/unavailable | Satisfied; fields/reports preserve evidence and failure reasons independently of form availability. |
+| Singer/model/etc. changes refresh dependent options where applicable | Satisfied for verified singer relations; no applicable implemented model/target form exists. Unknown relations are explicit. |
+| No authoritative frontend tool enumerations | Satisfied; frontend consumes Python model/projection metadata only. |
+| MIDI concept remains deferred; existing MIDI can be selected/imported | Satisfied; selection only, no invented generation command or backend-path claim. |
+| No fabricated MIDI command, installed OpenUtau choice, or default | Satisfied. |
+| Unsupported/unresolved workflows/controls explain unavailability | Satisfied; execution lifecycle #6, artifacts/raw ABC/score views #7, audio integrations #9, pipeline #10 remain deferred. MIDI producer needs a separately specified future interface, not an invented owner/command. |
+| Native/pinned identities and support/configuration/candidates/readiness distinct | Satisfied; independent source/contract reports, provenance, verification, State, and Readiness remain visible. |
 
 ## Build
 
