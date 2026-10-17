@@ -8,6 +8,21 @@ const values = new Map();
 const reportedSelections = new Map();
 let definition;
 let csrf;
+let previewId;
+let operationRevision = 0;
+let operationBusy = false;
+let selectedRun;
+let pollTimer;
+let pollRevision = 0;
+let runRequest = false;
+let listingRuns = false;
+
+function invalidatePreview() {
+  operationRevision += 1;
+  previewId = undefined;
+  document.getElementById("start-operation").disabled = true;
+  document.getElementById("command-preview").replaceChildren();
+}
 
 function paragraph(text, className = "") {
   const element = document.createElement("p");
@@ -36,7 +51,7 @@ function control(field, value) {
   input.type = field.selection === "existing-file" ? "file" :
     field.kind === "boolean" ? "checkbox" :
     field.kind === "number" ? "number" : "text";
-  input.required = field.required;
+  input.required = field.required && input.type !== "file";
   if (input.type === "file") {
     input.accept = field.accept;
   } else if (input.type === "checkbox") {
@@ -82,6 +97,13 @@ function dependentChoices(field, parentSelection) {
 }
 
 function render(workflow) {
+  invalidatePreview();
+  document.getElementById("execution-actions").hidden = !workflow.operation;
+  document.getElementById("preview-operation").disabled =
+    !csrf || !definition?.execution_enabled || !workflow.operation;
+  document.getElementById("operation-status").textContent = definition?.execution_enabled ?
+    "Preview validates local paths, not MIDI/lyric compatibility or resource readiness." :
+    "Execution unavailable: supply one explicit local Melisma source/executable at server startup. Unsaved editor changes do not apply.";
   document.getElementById("details").hidden = false;
   document.getElementById("workflow-title").textContent = workflow.label;
   const availability = document.getElementById("availability");
@@ -143,27 +165,42 @@ function render(workflow) {
 
   for (const field of workflow.fields) {
     const key = `${workflow.key}:${field.key}`;
+    const executionPath = Boolean(workflow.operation) && field.selection === "existing-file";
+    const valueKey = executionPath ? `${key}:host` : key;
     const label = document.createElement("label");
     label.htmlFor = field.key;
-    label.append(document.createTextNode(`${field.label} `));
+    const labelText = executionPath ?
+      `${field.key === "midi" ? "MIDI input" : field.label}: absolute local path` : field.label;
+    label.append(document.createTextNode(`${labelText} `));
     const indicator = document.createElement("span");
     indicator.className = "indicator";
-    indicator.textContent = field.required ? "(required)" : "(optional)";
+    indicator.textContent = field.selection === "existing-file" && !executionPath ?
+      "(optional filename metadata)" : field.required ? "(required)" : "(optional)";
     label.append(indicator);
-    const input = control(field, values.get(key) ?? field.default);
+    const input = control(
+      executionPath ? { ...field, selection: null } : field,
+      values.get(valueKey) ?? field.default,
+    );
     input.id = field.key;
     input.name = field.key;
     input.addEventListener("input", () => {
       if (input.type === "file") return;
-      values.set(key, input.type === "checkbox" ? input.checked : input.value);
+      values.set(valueKey, input.type === "checkbox" ? input.checked : input.value);
+      invalidatePreview();
       reportedSelections.delete(key);
       updateDependencies();
     });
-    const help = paragraph(field.help, "help");
+    const help = paragraph(executionPath ?
+      "Enter an absolute path on the machine running the Melisma web server. " +
+      "The browser does not read or upload the file. Preview validates this explicitly entered local path; " +
+      "Start uses the same retained path through the trusted Operation. " +
+      (field.key === "midi" ?
+        "MIDI must be format 0, one track, positive PPQN, with monophonic non-overlapping notes." :
+        "Use an existing Melisma lyric file, not free-form song lyrics.") : field.help, "help");
     help.id = `${field.key}-help`;
     input.setAttribute("aria-describedby", help.id);
     fields.append(label, input, help);
-    if (field.path_limitation) {
+    if (field.path_limitation && !executionPath) {
       fields.append(paragraph(field.path_limitation, "help"));
     }
     if (input.type === "file") {
@@ -211,6 +248,7 @@ function render(workflow) {
           input.value = field.capabilities[index].value;
           values.set(key, input.value);
           reportedSelections.set(key, index);
+          invalidatePreview();
         } else {
           reportedSelections.delete(key);
         }
@@ -226,7 +264,7 @@ function render(workflow) {
     const heading = document.createElement("h3");
     heading.textContent = `Inspectable ${output.kind.toUpperCase()} artifact`;
     artifacts.append(heading, paragraph(
-      `Future artifact path: ${output.field} field. No artifact is created or read here.`,
+      `Expected artifact destination: ${output.field} field. Preview does not write; current run inspection appears in the console.`,
     ));
     for (const view of output.views) {
       artifacts.append(paragraph(`${view.label} (${view.state}): ${view.reason}`));
@@ -361,7 +399,7 @@ async function loadWorkflows() {
       throw new Error(`Workflow definitions request failed: HTTP ${response.status}`);
     }
     showDefinitions(await response.json());
-    status.textContent = "Definitions loaded. All execution is disabled.";
+    status.textContent = "Definitions loaded. Only configured ABC/USTX operations can execute.";
   } catch (error) {
     status.textContent = `Unable to load workflow definitions: ${error.message}`;
     status.className = "unavailable";
@@ -378,6 +416,8 @@ async function loadUI() {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const ui = await response.json();
     csrf = ui.csrf;
+    render(definition.workflows.find(workflow => workflow.key === selector.value));
+    await refreshRuns();
     refreshStatus.textContent = `${ui.refresh.state}: ${ui.refresh.reason}`;
     refreshButton.disabled = false;
     refreshButton.addEventListener("click", async () => {
@@ -387,7 +427,7 @@ async function loadUI() {
         const updated = await post("/api/capabilities/refresh", {});
         reportedSelections.clear();
         showDefinitions(updated);
-        document.getElementById("status").textContent = "Definitions refreshed. All execution is disabled.";
+        document.getElementById("status").textContent = "Definitions refreshed; readiness remains separate from execution support.";
         document.getElementById("status").className = "";
         refreshStatus.textContent = `${updated.refresh.state}: ${updated.refresh.reason}`;
       } catch (error) {
@@ -426,6 +466,261 @@ async function loadUI() {
   }
 }
 
+function copyButton(label, text) {
+  return button(label, async event => {
+    const target = event?.currentTarget;
+    if (target) target.disabled = true;
+    try {
+      await navigator.clipboard.writeText(text);
+      document.getElementById("run-status").textContent = `${label}: copied.`;
+    } catch (error) {
+      document.getElementById("run-status").textContent = `Copy failed: ${error.message}`;
+    } finally {
+      if (target) target.disabled = false;
+    }
+  });
+}
+
+function textSection(container, label, text, copy = false) {
+  const heading = document.createElement("h3");
+  heading.textContent = label;
+  const output = document.createElement("pre");
+  output.title = label;
+  output.textContent = text;
+  container.append(heading, output);
+  if (copy) container.append(copyButton(`Copy ${label}`, text));
+}
+
+function renderCommand(container, record) {
+  const command = record.command;
+  textSection(container, "Executable", command.executable);
+  const heading = document.createElement("h3");
+  heading.textContent = "Arguments (ordered)";
+  const list = document.createElement("ol");
+  command.arguments.forEach(argument => {
+    const item = document.createElement("li");
+    item.textContent = JSON.stringify(argument);
+    list.append(item);
+  });
+  container.append(heading, list);
+  textSection(container, "Working directory", command.cwd);
+  textSection(container, "Display-only shell command", command.display, true);
+  textSection(container, "Expected artifacts", JSON.stringify(record.expected, null, 2));
+  textSection(container, "Operation metadata", JSON.stringify(record.metadata, null, 2));
+}
+
+function operationPending(pending) {
+  const workflow = definition?.workflows.find(item => item.key === selector.value);
+  operationBusy = pending;
+  fields.disabled = pending;
+  selector.disabled = pending;
+  document.getElementById("refresh").disabled = pending || !csrf;
+  document.getElementById("preview-operation").disabled =
+    pending || !csrf || !definition?.execution_enabled || !workflow?.operation;
+  document.getElementById("start-operation").disabled = pending || !previewId;
+}
+
+async function previewOperation() {
+  if (operationBusy) return;
+  invalidatePreview();
+  const revision = operationRevision;
+  const workflow = definition.workflows.find(item => item.key === selector.value);
+  const inputs = Object.fromEntries(workflow.fields.map(field => [
+    field.key, values.get(`${workflow.key}:${field.key}${field.selection === "existing-file" ? ":host" : ""}`) ?? field.default,
+  ]));
+  operationPending(true);
+  const status = document.getElementById("operation-status");
+  status.textContent = "Validating preview...";
+  try {
+    const record = await post("/api/operations/preview", { workflow: workflow.key, inputs });
+    if (revision !== operationRevision) return;
+    previewId = record.preview_id;
+    const container = document.getElementById("command-preview");
+    container.replaceChildren();
+    renderCommand(container, record);
+    container.append(paragraph(record.publication));
+    status.textContent = "Preview ready; nothing executed. Start uses this exact operation.";
+  } catch (error) {
+    status.textContent = `Preview failed: ${error.message}`;
+  } finally {
+    operationPending(false);
+  }
+}
+
+async function startOperation() {
+  if (operationBusy || !previewId) return;
+  operationPending(true);
+  try {
+    const record = await post("/api/runs", { preview_id: previewId });
+    previewId = undefined;
+    document.getElementById("operation-status").textContent = `Submitted ${record.id}.`;
+    selectRun(record.id);
+    renderRun(record);
+    schedulePoll(record);
+    await refreshRuns();
+  } catch (error) {
+    // A lost response may still have started a run; never retry a submission automatically.
+    invalidatePreview();
+    document.getElementById("operation-status").textContent =
+      `Start failed or response lost: ${error.message}. Refresh session runs before retrying.`;
+  } finally {
+    operationPending(false);
+  }
+}
+
+function selectRun(id) {
+  clearTimeout(pollTimer);
+  pollRevision += 1;
+  selectedRun = id;
+  document.getElementById("stop-run").disabled = true;
+}
+
+function renderRun(record) {
+  const container = document.getElementById("execution-console");
+  const scroll = new Map([...container.children]
+    .filter(item => item.tagName.toLowerCase() === "pre")
+    .map(item => [item.title, item.scrollTop]));
+  container.replaceChildren();
+  const process = record.process;
+  container.append(paragraph(
+    `${record.tool} / ${record.operation}; run ${record.id}; phase: ${record.phase}; ` +
+    `process: ${process.state}; ${record.complete ? (record.success ? "successful" : "not successful") : "in progress"}`,
+  ));
+  textSection(container, "Lifecycle", JSON.stringify({
+    pid: process.pid, submitted: record.submitted_at, started: process.started_at,
+    process_completed: process.completed_at, completed: record.completed_at,
+    elapsed_seconds: record.duration, exit_status: process.exit_status,
+    signal: process.signal, stop_requested: record.stop_requested,
+    escalated: process.escalated,
+  }, null, 2));
+  renderCommand(container, record);
+  for (const stream of ["stdout", "stderr"]) {
+    textSection(container, stream, process[stream], true);
+    container.append(paragraph(
+      `${stream}: ${process[`${stream}_bytes`]} bytes received; ` +
+      (process[`${stream}_truncated`] ? "TRUNCATED (console only): first 1 MiB retained." : "not truncated.") +
+      ` Capture: ${process[`${stream}_complete`] ? "complete (EOF)" : "awaiting EOF or incomplete; inspect process diagnostic"}.`,
+    ));
+  }
+  const diagnostics = {
+    process_error: process.error, operation_validation_errors: record.errors,
+    artifacts: record.artifacts, completion_metadata: record.completion,
+    validation_processes: record.validation_processes,
+    active_validation: record.active_validation,
+  };
+  textSection(container, "Process start/rejection/capture diagnostic", process.error ?? "None");
+  textSection(container, "Operation validation errors", JSON.stringify(record.errors, null, 2));
+  textSection(container, "Inspected artifacts", JSON.stringify(record.artifacts, null, 2));
+  textSection(container, "Completion metadata", JSON.stringify(record.completion, null, 2));
+  textSection(container, "Validation subprocesses", JSON.stringify(record.validation_processes, null, 2));
+  if (record.active_validation) {
+    textSection(container, "Active validation subprocess", JSON.stringify(record.active_validation, null, 2));
+  }
+  container.append(copyButton("Copy Diagnostics and artifacts", JSON.stringify(diagnostics, null, 2)));
+  for (const item of container.children) {
+    if (scroll.has(item.title)) item.scrollTop = scroll.get(item.title);
+  }
+  document.getElementById("stop-run").disabled = runRequest || !record.can_stop;
+}
+
+function schedulePoll(record) {
+  clearTimeout(pollTimer);
+  if (!record.complete && record.id === selectedRun) {
+    pollTimer = setTimeout(() => pollRun(record.id), 500);
+  }
+}
+
+async function pollRun(id) {
+  if (!id || id !== selectedRun) return;
+  clearTimeout(pollTimer);
+  const revision = ++pollRevision;
+  document.getElementById("stop-run").disabled = true;
+  try {
+    const response = await fetch(`/api/runs/${id}`, { cache: "no-store" });
+    const record = await response.json();
+    if (!response.ok) throw new Error(record.error || `HTTP ${response.status}`);
+    if (id !== selectedRun || revision !== pollRevision) return;
+    renderRun(record);
+    document.getElementById("run-status").textContent = record.complete ?
+      "Run complete; polling stopped." : "Receiving output (500 ms polling).";
+    schedulePoll(record);
+  } catch (error) {
+    if (id !== selectedRun || revision !== pollRevision) return;
+    document.getElementById("run-status").textContent =
+      `Polling failed: ${error.message}. Refresh session runs to retry.`;
+    document.getElementById("stop-run").disabled = true;
+  }
+}
+
+async function refreshRuns() {
+  if (listingRuns || runRequest) return;
+  listingRuns = true;
+  const control = document.getElementById("refresh-runs");
+  const choices = document.getElementById("session-runs");
+  control.disabled = true;
+  choices.disabled = true;
+  try {
+    const response = await fetch("/api/runs", { cache: "no-store" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const result = await response.json();
+    choices.replaceChildren();
+    for (const run of result.runs) {
+      const option = document.createElement("option");
+      option.value = run.id;
+      option.textContent = `${run.tool}/${run.operation} ${run.id} (${run.phase})`;
+      choices.append(option);
+    }
+    if (!result.runs.some(run => run.id === selectedRun)) {
+      selectRun(result.runs.at(-1)?.id);
+      document.getElementById("execution-console").replaceChildren();
+    }
+    choices.value = selectedRun ?? "";
+    if (selectedRun) await pollRun(selectedRun);
+  } catch (error) {
+    document.getElementById("run-status").textContent = `Run listing failed: ${error.message}`;
+  } finally {
+    control.disabled = false;
+    choices.disabled = false;
+    listingRuns = false;
+  }
+}
+
+async function stopRun() {
+  if (!selectedRun || runRequest || listingRuns) return;
+  runRequest = true;
+  pollRevision += 1;
+  clearTimeout(pollTimer);
+  const id = selectedRun;
+  let record;
+  document.getElementById("stop-run").disabled = true;
+  document.getElementById("session-runs").disabled = true;
+  document.getElementById("refresh-runs").disabled = true;
+  try {
+    record = await post(`/api/runs/${id}/stop`, {});
+    if (id !== selectedRun) return;
+    document.getElementById("run-status").textContent = "Stop requested for this owned run only.";
+  } catch (error) {
+    document.getElementById("run-status").textContent =
+      `Stop failed or response lost: ${error.message}. Refresh session runs to check state.`;
+  } finally {
+    runRequest = false;
+    document.getElementById("session-runs").disabled = false;
+    document.getElementById("refresh-runs").disabled = false;
+    if (record && id === selectedRun) {
+      renderRun(record);
+      schedulePoll(record);
+    }
+  }
+}
+
+document.getElementById("preview-operation").addEventListener("click", previewOperation);
+document.getElementById("start-operation").addEventListener("click", startOperation);
+document.getElementById("refresh-runs").addEventListener("click", refreshRuns);
+document.getElementById("stop-run").addEventListener("click", stopRun);
+document.getElementById("session-runs").addEventListener("change", () => {
+  selectRun(document.getElementById("session-runs").value);
+  pollRun(selectedRun);
+});
 selector.addEventListener("change", () => {
   render(definition.workflows.find(workflow => workflow.key === selector.value));
 });

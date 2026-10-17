@@ -1,4 +1,4 @@
-"""Declarative forms, not execution operations or runtime-readiness claims."""
+"""Declarative forms and execution boundaries, not runtime-readiness claims."""
 
 from __future__ import annotations
 
@@ -58,7 +58,7 @@ class DependencyDefinition:
 PATH_LIMITATION = (
     "Browser selection supplies a filename, not a reusable absolute host path. "
     "Contents are not read or uploaded; compatibility is not validated. "
-    "A separately authorized local-path handoff is deferred to Issue #6."
+    "Execution requires the separate explicitly entered absolute local path below."
 )
 
 
@@ -213,17 +213,18 @@ def workflow_definitions(
     forms = tuple(
         WorkflowDefinition(
             f"generate-{kind}", f"Generate {kind.upper()}", State.SUPPORTED,
-            True, "Form only; command execution is not implemented in this slice.",
+            True, "ABC/USTX preview and execution require an explicitly configured "
+            "local Melisma executable and entered absolute paths. Not audio readiness.",
             (
                 MIDI, LYRICS,
                 FieldDefinition(
-                    f"{kind}_output", f"{kind.upper()} output filename metadata", True,
-                    "output-path", "Filename metadata for a future generated artifact. "
-                    "No file is created or inspected in this slice.",
+                    f"{kind}_output", f"{kind.upper()} new absolute output path", True,
+                    "output-path", "Explicit local destination; parent must exist. "
+                    "The adapter creates the artifact exclusively after successful execution.",
                     accept=f".{kind}", selection="output-name",
                     path_limitation=(
-                        "Output filename metadata only, not a selected host path or permission "
-                        "to write. No save dialog or file creation; execution belongs to Issue #6."
+                        "Enter an absolute local path; this is not a save dialog. "
+                        "Preview does not write; Start authorizes creation without overwrite."
                     ),
                 ),
                 *(metadata if kind == "ustx" else ()),
@@ -233,8 +234,8 @@ def workflow_definitions(
                 views=(
                     ArtifactView(
                         "raw-text", "Raw ABC text", State.UNAVAILABLE,
-                        "Future read-only artifact inspection; no artifact is "
-                        "generated or read in this slice.",
+                        "Raw artifact browsing is deferred to Issue #7; current run "
+                        "artifact existence, size and validity are reported in the console.",
                     ),
                     ArtifactView(
                         "score", "Rendered musical score", State.UNAVAILABLE,
@@ -256,8 +257,8 @@ def workflow_definitions(
         *forms,
         WorkflowDefinition(
             "render-vocals", "Render Vocals", State.UNAVAILABLE, False,
-            "Requires UI integration with the OpenUtau render adapter, resource "
-            "validation, and an execution lifecycle; none is enabled in this slice.",
+            "Issue #9: requires OpenUtau audio workflow integration and resource "
+            "validation; the adapter alone does not establish runtime readiness.",
         ),
         WorkflowDefinition(
             "generate-yue2-audio", "Generate YuE2 Audio", State.UNAVAILABLE, False,
@@ -267,12 +268,12 @@ def workflow_definitions(
         ),
         WorkflowDefinition(
             "mix-audio", "Mix Audio", State.UNAVAILABLE, False,
-            "Requires UI integration with the FFmpeg mix adapter, audio input/"
-            "output validation, and an execution lifecycle.",
+            "Issue #9: requires FFmpeg audio workflow integration and audio input/"
+            "output validation; execution is not enabled here.",
         ),
         WorkflowDefinition(
             "play-audio", "Play Audio", State.UNAVAILABLE, False,
-            "Requires UI integration with the FFplay adapter's owned playback "
+            "Issue #9: requires UI integration with the FFplay adapter's owned playback "
             "lifecycle and audio validation.",
         ),
         WorkflowDefinition(
@@ -301,7 +302,14 @@ def workflow_document(
 ) -> dict[str, object]:
     return {
         "schema_version": 1,
-        "execution_enabled": False,
+        "execution_enabled": configuration is not None and len([
+            source for source in configuration.sources if source.tool == "melisma"
+        ]) == 1 and any(
+            source.tool == "melisma" and source.executable is not None
+            and source.kind.value == "local"
+            and source.contract in (None, "melisma-phase1")
+            for source in configuration.sources
+        ),
         "workflows": [
             asdict(item) for item in workflow_definitions(configuration, reports=reports)
         ],

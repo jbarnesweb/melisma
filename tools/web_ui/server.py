@@ -1,9 +1,10 @@
-"""Loopback forms, explicit read-only capability refresh, and unsaved previews."""
+"""Loopback workflow execution, read-only capability refresh and unsaved config."""
 
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import secrets
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -17,7 +18,9 @@ from ..orchestration.configuration import (
     Configuration, ConfigurationError, configuration_from_value,
 )
 from ..orchestration.discovery import DiscoveryService, DiscoverySource
+from ..orchestration.execution import RegistryFull
 from .configuration import configuration_document
+from .execution import ExecutionAPI
 from .workflows import workflow_document
 
 
@@ -27,6 +30,7 @@ STATIC_ROUTES = {
     "/style.css": ("style.css", "text/css; charset=utf-8"),
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
 }
+RUN_ROUTE = re.compile(r"/api/runs/([0-9a-f]{32})(/stop)?\Z")
 
 Refresh = Callable[[tuple[DiscoverySource, ...]], tuple[DiscoveryReport, ...]]
 
@@ -76,6 +80,20 @@ class WorkflowHandler(BaseHTTPRequestHandler):
                 "refresh": self.server.refresh_status,
             }).encode("utf-8")
             content_type = "application/json; charset=utf-8"
+        elif self.path == "/api/runs":
+            self._respond(
+                200, json.dumps({"runs": self.server.execution.registry.list()}).encode(),
+                head=head,
+            )
+            return
+        elif (match := RUN_ROUTE.fullmatch(self.path)) and match[2] is None:
+            try:
+                value = self.server.execution.registry.get(match[1]).snapshot()
+            except KeyError:
+                self._respond(404, b'{"error":"Run not retained in this session"}', head=head)
+                return
+            self._respond(200, json.dumps(value).encode(), head=head)
+            return
         elif self.path in STATIC_ROUTES:
             filename, content_type = STATIC_ROUTES[self.path]
             try:
@@ -111,7 +129,11 @@ class WorkflowHandler(BaseHTTPRequestHandler):
         self._respond(status, json.dumps(value, allow_nan=False).encode("utf-8"))
 
     def do_POST(self) -> None:
-        if self.path not in ("/api/capabilities/refresh", "/api/configuration-preview"):
+        stop_route = RUN_ROUTE.fullmatch(self.path)
+        if self.path not in (
+            "/api/capabilities/refresh", "/api/configuration-preview",
+            "/api/operations/preview", "/api/runs",
+        ) and not (stop_route and stop_route[2] == "/stop"):
             self._reject_write()
             return
         self.close_connection = True
@@ -146,6 +168,31 @@ class WorkflowHandler(BaseHTTPRequestHandler):
                 raise ValueError("object required")
         except (ValueError, UnicodeError, OSError, RecursionError):
             self._json(400, {"error": "Malformed JSON request"})
+            return
+        if self.path in ("/api/operations/preview", "/api/runs") or stop_route:
+            try:
+                if self.path == "/api/operations/preview":
+                    result = self.server.execution.preview(draft)
+                    status = 200
+                elif self.path == "/api/runs":
+                    result = self.server.execution.start(draft)
+                    status = 202
+                else:
+                    if draft != {}:
+                        raise ValueError("Stop accepts only an empty object; PID termination is prohibited")
+                    assert stop_route is not None
+                    result = self.server.execution.registry.get(stop_route[1]).stop()
+                    status = 200
+            except RegistryFull as error:
+                self._json(409, {"error": str(error), "category": "admission"})
+                return
+            except KeyError:
+                self._json(404, {"error": "Run or preview not retained in this session"})
+                return
+            except (ValueError, OSError) as error:
+                self._json(422, {"error": str(error), "category": "validation"})
+                return
+            self._json(status, result)
             return
         if self.path == "/api/configuration-preview":
             try:
@@ -196,6 +243,7 @@ class WorkflowServer(ThreadingHTTPServer):
     ) -> None:
         self.configuration = configuration or Configuration()
         self.configuration_preview = configuration_document(self.configuration)
+        self.execution = ExecutionAPI(self.configuration)
         self.refresh_boundary = refresh
         self.refresh_lock = threading.Lock()
         self.csrf = secrets.token_hex(32)
@@ -208,6 +256,10 @@ class WorkflowServer(ThreadingHTTPServer):
             workflow_document(configuration, reports=reports),
         ).encode("utf-8")
         super().__init__(("127.0.0.1", port), WorkflowHandler)
+
+    def server_close(self) -> None:
+        self.execution.registry.close()
+        super().server_close()
 
     def refresh(self) -> dict[str, object]:
         sources = self.configuration.sources
@@ -263,7 +315,7 @@ def main() -> None:
     args = parser.parse_args()
     with create_server(args.port) as server:
         print(
-            f"Read-only workflow UI: http://127.0.0.1:{server.server_port}/",
+            f"Local workflow UI: http://127.0.0.1:{server.server_port}/",
             flush=True,
         )
         try:

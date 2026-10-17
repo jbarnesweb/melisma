@@ -78,7 +78,8 @@ child with `poll()`, `wait()`, and bounded `stop()`. Use it as a context manager
 to stop/reap the exact child on exit. Cancellation is not exposed for the
 generation tools, whose graceful cancellation contracts are unverified.
 There is no public command endpoint or pipeline graph in this adapter package.
-The separate read-only local UI below does not invoke adapters or discovery.
+The local UI below invokes only explicitly configured Melisma ABC/USTX
+operations; audio integrations and full-pipeline execution remain deferred.
 
 Run the focused, model-free tests with:
 
@@ -213,12 +214,13 @@ Run the offline persistence tests with:
 python3 -B -m unittest discover -s tests -p test_configuration.py -v
 ```
 
-### Read-only local workflow UI
+### Local workflow UI and execution console
 
 Issue #5 provides dependency-free workflow forms, capability-state display,
 explicit read-only refresh, and an **unsaved** tool-configuration editor in
-`tools/web_ui/`. It extends the existing workflow and capability projections;
-it does not implement workflow execution.
+`tools/web_ui/`. Issue #6 extends these projections with command preview,
+current-session execution and diagnostics for **Generate ABC / Generate USTX
+only**, without claiming resource/runtime readiness.
 From the repository root, start it with:
 
 ```sh
@@ -234,27 +236,32 @@ python3 -B -m tools.web_ui.server --port 8766
 The standard-library HTTP server always binds to IPv4 `127.0.0.1`; there is no
 host override. Fixed GET/HEAD routes are `/`, `/style.css`, `/app.js`,
 `/api/workflows`, and `/api/ui` (editor structure/current configuration and
-same-origin request token). The only POST routes are
-`/api/capabilities/refresh` and the non-mutating `/api/configuration-preview`.
-PUT/PATCH/DELETE and other POST routes are rejected. Arbitrary file paths,
-directory listings, uploads, artifact reads, workflow execution, and
-configuration mutation/persistence endpoints are not exposed.
+same-origin request token). POST routes additionally include the guarded
+operation preview, run submission and targeted Stop described below.
+PUT/PATCH/DELETE and other POST routes are rejected. Directory listings,
+uploads, arbitrary file serving, artifact browsing and configuration
+mutation/persistence endpoints are not exposed.
 This is a local development UI, not a production server.
 
 All eight workflows remain visible. Generate ABC and Generate USTX have
-available **forms**, not execution actions or runtime-readiness claims. Both
-require an existing compatible MIDI selection, a Melisma lyric-file selection,
-and output-filename metadata. MIDI uses a browser file picker restricted by
-`.mid,.midi` hints; lyrics uses `.txt`. These hints do not establish compatibility:
+available **forms**; execution additionally requires an explicitly configured
+local Melisma executable and absolute local paths. This is not an audio
+runtime-readiness claim. Both require existing compatible MIDI and Melisma
+lyric files and a new output path. Each required input has one explicit
+absolute-path text control, with no browser file picker alongside it. Paths
+refer to the machine running the Melisma web server, not the browser's machine.
+The browser does not read or upload the files. Explicit paths do not establish compatibility:
 MIDI still requires format 0, one track, positive PPQN, and monophonic,
-non-overlapping notes. Selection reads only the browser-supplied filename, not
-the contents; no file is uploaded, parsed, validated, served, or created.
-Browsers do **not** reveal a reusable absolute host path. The UI explicitly
-records that limitation and never converts a filename or fake browser path
-into a backend input path. Issue #6 owns the separately authorized local-path
-handoff before execution. Output selection is filename metadata, not a save
-dialog, filesystem handle, or permission to write. No currently implemented
-workflow form requires a directory, so no directory picker or invented directory
+non-overlapping notes. Preview validates the explicitly entered local paths;
+Start uses those same retained paths through the trusted Operation. Changing
+either path invalidates Preview. A browser filename or fake browser path is
+never converted into an execution input. Metadata-only existing-file controls
+elsewhere retain filename-only picker behavior, without execution authority.
+The output field is an explicit absolute destination, not a save
+dialog or filesystem handle. Preview checks nonempty/readable inputs and a new
+output under an existing parent; Start authorizes execution and exclusive
+artifact creation. Compatibility is checked by Melisma, not the browser.
+No currently implemented workflow form requires a directory, so no directory picker or invented directory
 field is added; explicit configuration roots remain manually entered host paths.
 Switching workflows removes irrelevant fields. Text/filename metadata is kept
 only in browser memory; file selections must be reselected after switching.
@@ -291,7 +298,8 @@ finally:
 
 Startup serializes the supplied document without discovery or filesystem scans.
 Ordinary GET/HEAD requests serve snapshots. The CLI/default server supplies no
-reports or configuration and stays offline. To refresh, explicitly click
+reports or configuration and cannot execute until explicitly configured.
+To refresh, explicitly click
 **Refresh configured capabilities (read-only)**. With no configured sources,
 it reports that no paths were scanned.
 
@@ -404,37 +412,161 @@ Generate MIDI is unresolved/deferred: current Melisma consumes an existing
 compatible MIDI file and does not generate MIDI. Render Vocals, Generate YuE2
 Audio, Mix Audio, Play Audio, and Full Pipeline show explicit UI integration/
 validation/lifecycle dependency reasons. YuE2's native song and pinned
-instrumental contracts remain separate future integrations. Existing adapters
-and the experimental pipeline are not executed by this UI.
+instrumental contracts remain separate future integrations owned by Issue #9.
+The experimental pipeline is not executed by this UI (Issue #10).
 
 ABC output is modeled as an inspectable `abc` artifact tied to the output-path
 field, compatible with orchestration's `ExpectedArtifact` record. Raw-text
 inspection and a rendered musical-score view have explicit future/unavailable
-metadata. Neither view reads an artifact in this slice; score rendering has
+metadata. Neither browsing view reads an artifact here; current-run artifact
+validation and diagnostics are reported separately. Score rendering has
 no implementation, executable action, or rendering dependency.
 
-There are no command previews, workflow submission actions, configuration
-writes, remote contacts, runtime/model loading, audio operations, or new
-dependencies. Only an explicit capability refresh can perform Issue #3's
-configured, read-only local metadata scans; its transient cache is not persisted.
+There are no configuration writes, remote runtime contacts, model loading,
+audio operations, or new dependencies. An explicit capability refresh performs
+only Issue #3's configured, read-only local metadata scans; its transient cache
+is not persisted. Explicit ABC/USTX preview/start requests inspect their selected
+local inputs/outputs; startup and ordinary workflow GETs still do not.
+
+#### Command preview, session records, and Stop (Issue #6)
+
+Configure the existing in-memory server API explicitly; browser configuration
+drafts remain unsaved and **never** select the executable used for execution:
+
+```python
+from pathlib import Path
+from tools.orchestration import Configuration, DiscoverySource
+from tools.web_ui.server import create_server
+
+config = Configuration(sources=(DiscoverySource(
+    "melisma", Path("/absolute/melisma-root"),
+    executable=Path("/absolute/melisma-root/build/melisma"),
+),))
+with create_server(configuration=config) as server:
+    server.serve_forever()
+```
+
+Exactly one local `melisma-phase1` source with explicit executable is required.
+This neither builds nor installs anything nor proves the executable's identity
+or readiness. Executable configuration is trusted operator input.
+Only ABC/USTX are wired; internal adapter IR/bundle/audio operations are not
+added to the browser. Existing internal adapter calls remain supported.
+
+**Preview** shows the absolute executable, ordered arguments (including empty
+strings), cwd, copyable `shlex.join` shell representation, expected artifacts,
+and publication metadata. Environment overrides and their values are omitted
+from preview, run and validation-process command documents. The shell string is
+**display-only**: `Popen` always
+receives the original structured argument vector with `shell=False`.
+The server builds one immutable adapter Operation; Start consumes its opaque
+preview ID, not newly submitted command data. Edits invalidate the visible
+preview. At most 32 unsubmitted previews are retained, oldest first evicted.
+Input paths are rechecked before submission without changing argv/cwd.
+
+Web ABC/USTX use Melisma's existing **stdout mode**, intentionally omitting
+the CLI output positional argument. The console therefore includes generated
+text in stdout, and the copied command alone prints that text rather than
+creating the named artifact. After successful exit and complete capture, the
+runner copies the complete raw stdout spool into the exclusively created
+expected output (`open("xb")`), then the adapter inspects its format. This avoids
+Melisma's legacy overwriting file mode and refuses existing paths, symlinks,
+concurrent session output claims and publication races. Console truncation
+does not truncate artifacts or impose a functional output-size limit. Artifact
+publication never uses presentation-decoded text. A publication/validation
+failure is reported separately from
+the primary process exit and streams. Partial new artifacts from write errors
+remain inspectable; no existing output is removed or replaced.
+
+| Route | Contract |
+| --- | --- |
+| `POST /api/operations/preview` | `{workflow, inputs}`; exact supported field names, explicit absolute local paths; no execution |
+| `POST /api/runs` | `{preview_id}` only; 202 with a stable run ID |
+| `GET /api/runs` | Current retained records in submission order |
+| `GET /api/runs/RUN_ID` | Incremental independent stdout/stderr and full diagnostics |
+| `POST /api/runs/RUN_ID/stop` | Empty object; exact owned run only, never a supplied PID |
+
+All writes reuse exact loopback Host, same-origin checks, CSRF token, strict
+JSON framing/duplicate rejection and size limits. Invalid inputs return
+structured 422 errors, unknown/evicted IDs 404, active/output admission
+conflicts 409. Preview cannot accept executable paths, argv, raw shell text,
+cwd or environment overrides. Input/output paths are deliberately authorized
+local file access, not a sandbox; run only with trusted operator configuration.
+If a start response is lost, refresh runs before retrying; the UI never
+automatically resubmits an operation.
+
+Records preserve `created -> starting -> running -> exited|signalled`, with
+`start-failed` (original OS diagnostic), `rejected` (preflight refusal), or
+`cancelled` (Stop before spawn) alternatives. Process termination and Stop
+intent are independent: an exited/signalled child can also be operator-stopped,
+even if it handles termination with exit 0. `complete` becomes true only after
+adapter artifact/validation finalization; `phase=validating` distinguishes that
+interval from primary process completion. UTC ISO 8601 timestamps include
+offsets; elapsed process and operation durations use monotonic clocks.
+
+The console shows run/tool/operation, phase/process state, PID, submitted/
+started/completed times, elapsed seconds, exit status/signal, Stop/escalation
+flags, separate scrollable stdout/stderr, process error, operation validation
+errors, artifact path/kind/existence/size/validity/error, completion metadata
+and validation subprocess records. Commands, each stream and diagnostics have
+copy controls. All output is rendered with text nodes, never interpreted HTML.
+Polling is bounded at 500 ms and stops at operation completion or a visible
+request error; refresh/reselect resumes it. Only the selected run is polled.
+
+The locked registry retains **32 runs**, including at most **4 active**.
+Admission evicts the oldest submitted completed run first, never an active
+run. Each stream drains independently and retains its first **1 MiB of raw
+bytes**, with received-byte counts and explicit truncation flags.
+UTF-8 split reads are handled incrementally; invalid bytes use replacement
+characters. Independent private binary temporary spools preserve complete
+stdout/stderr for `ProcessRunner` and session adapter execution. Machine
+parsers always receive complete text, not the console prefix; primary and
+validation records retain bounded presentation copies after finalization.
+Spools consume disk proportional to output and are closed/deleted at command
+finalization. Complete machine text is transiently loaded into memory; output
+size is subject to resources/filesystem capacity, not console retention.
+Playback's diagnostic-only `OwnedChild` capture remains prefix-only.
+Thread-safe snapshots retain captured console text after exit.
+Records disappear on server restart; no database, cross-session history,
+artifact graph or provenance browser is implemented (Issue #7).
+
+Stop records intent, sends termination to the exact owned child, waits up to
+one second in the web API, then escalates to forced kill and waits/reaps.
+The internal OwnedChild API retains a configurable `(0,5]` second bound.
+Repeated Stop is safe; completed runs are unchanged. Stop is disabled once no
+child/start remains stoppable; stopping during finalization cannot undo a
+completed publication. The server closes admission, stops owned children,
+joins workers and closes pipes at shutdown. No process-name searches, process
+groups or arbitrary PID termination are used. Descendants are not targeted;
+after child exit is observed, readers continue draining and awaiting EOF for
+up to 0.5 seconds, including idle intervals. If an inherited writer prevents
+EOF, capture is explicitly incomplete: the reader closes, a stream-specific
+error is reported alongside byte counts/truncation/completeness, and the
+operation cannot succeed or publish its stdout artifact. Console truncation
+alone does not mean capture is incomplete.
+This is process termination, not tool-specific transactional cancellation.
+Audio/model-generation cancellation contracts remain unverified and unexposed.
 
 Run the focused tests and the complete existing Python suite from the root:
 
 ```sh
 python3 -B -m unittest discover -s tests -p test_web_ui.py -v
+python3 -B -m unittest discover -s tests -p 'test_*execution.py' -v
 python3 -B -m unittest discover -s tests -p 'test_*.py' -v
-ctest --test-dir build --output-on-failure
+PYTHONDONTWRITEBYTECODE=1 ctest --test-dir build --output-on-failure
 git diff --check
 ```
 
-The focused suite includes live loopback HTTP, pure model, refresh-injection/
-authorization/concurrency, and browser-control/dependency-event tests.
+The focused suites include live loopback HTTP, deterministic helper processes,
+streaming/Stop/reaping/retention/publication, pure model, refresh-injection/
+authorization/concurrency, and browser-control/dependency/console-event tests.
 The latter use the already installed GJS runtime when present (otherwise that
 one test is explicitly skipped); no JavaScript runtime/package is installed.
 
-#### Issue #5 task and acceptance audit
+#### Historical Issue #5 task and acceptance audit
 
-Audited against the actual issue tasks and acceptance criteria. "Satisfied"
+This records the Issue #5 baseline; Issue #6 extensions above supersede its
+execution/path/lifecycle limitations. Audited against the actual issue tasks
+and acceptance criteria. "Satisfied"
 means UI behavior, not execution or validated runtime readiness.
 
 | Issue task | Status and implementation boundary |

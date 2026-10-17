@@ -37,7 +37,10 @@ class Element {
     if (!this.listeners.has(event)) this.listeners.set(event, []);
     this.listeners.get(event).push(handler);
   }
-  trigger(event) { (this.listeners.get(event) || []).forEach(handler => handler()); }
+  trigger(event) {
+    return Promise.all((this.listeners.get(event) || [])
+      .map(handler => handler({ currentTarget: this })));
+  }
   get options() { return this.children.filter(child => child.tagName === "option"); }
   get value() { return this._value; }
   set value(value) { this._value = String(value); }
@@ -66,6 +69,16 @@ const document = {
   createTextNode(textContent) { return { textContent }; },
 };
 const requests = [];
+const timers = new Map();
+let timerId = 0;
+function setTimeout(action, delay) {
+  assert(delay === 500, "Polling interval is bounded at 500 ms");
+  timers.set(++timerId, action);
+  return timerId;
+}
+function clearTimeout(id) { timers.delete(id); }
+const copied = [];
+const navigator = { clipboard: { async writeText(text) { copied.push(text); } } };
 function fetch(path, options) {
   requests.push({ path, options });
   return new Promise(() => {});
@@ -75,12 +88,17 @@ function structuredClone(value) { return JSON.parse(JSON.stringify(value)); }
 // APPLICATION_INSERTION_POINT
 
 const ustx = fixture.document.workflows.find(item => item.key === "generate-ustx");
-render(ustx);
+const metadataWorkflow = {
+  ...structuredClone(ustx), key: "metadata-only", operation: false,
+  fields: ustx.fields.filter(field => field.selection === "existing-file"), outputs: [],
+};
+render(metadataWorkflow);
 assert(document.getElementById("midi").type === "file", "MIDI must use file picker");
 assert(document.getElementById("midi").accept === ".mid,.midi", "MIDI extension hints");
 assert(document.getElementById("lyrics").type === "file", "Lyrics must use file picker");
 assert(document.getElementById("lyrics").accept === ".txt", "Lyric extension hints");
-assert(document.getElementById("ustx_output").type === "text", "Output is metadata, not an upload");
+assert(!walk(fields, item => item.id === "midi-host-path"),
+  "Non-executable filename metadata has no execution-path control");
 const midiInput = document.getElementById("midi");
 const requestsBeforeFileSelection = requests.length;
 const selectedFile = { name: "compatible.mid" };
@@ -93,8 +111,15 @@ Object.defineProperty(midiInput, "value", {
 });
 midiInput.trigger("input");
 midiInput.trigger("change");
-assert(values.get("generate-ustx:midi") === "compatible.mid", "Only filename metadata retained");
+assert(values.get("metadata-only:midi") === "compatible.mid", "Only filename metadata retained");
 assert(requests.length === requestsBeforeFileSelection, "File selection must not initiate network requests");
+values.set("generate-ustx:midi", "compatible.mid");
+values.set("generate-ustx:lyrics", "gloria.txt");
+render(ustx);
+assertExecutionInputs(ustx);
+assert(document.getElementById("midi").value === "" && document.getElementById("lyrics").value === "",
+  "Filename-only values cannot populate execution paths");
+assert(document.getElementById("ustx_output").type === "text", "Output remains an explicit path");
 const singer = document.getElementById("singer");
 const singerChoices = document.getElementById("singer-choices");
 const rendererChoices = document.getElementById("renderer-choices");
@@ -178,6 +203,228 @@ showDefinitions(fixture.document);
 selector.value = "generate-abc";
 selector.trigger("change");
 assert(!walk(fields, item => item.id === "singer"), "Workflow switch removes irrelevant USTX fields");
-assert(document.getElementById("midi").type === "file", "Workflow switch preserves MIDI file semantics");
+assertExecutionInputs(fixture.document.workflows.find(item => item.key === "generate-abc"));
 assert(fixture.document.workflows.length === 8, "All workflows remain visible");
 print("Browser control and dependency assertions passed");
+
+function collect(element, predicate, found = []) {
+  if (predicate(element)) found.push(element);
+  for (const child of element.children || []) collect(child, predicate, found);
+  return found;
+}
+
+function assertExecutionInputs(workflow) {
+  assert(!collect(fields, item => item.type === "file").length,
+    `${workflow.key}: executable inputs have no browser pickers`);
+  for (const key of ["midi", "lyrics"]) {
+    const inputs = collect(fields, item => item.tagName === "input" && item.id === key);
+    assert(inputs.length === 1 && inputs[0].type === "text" && inputs[0].required,
+      `${workflow.key}: one required absolute-path execution control for ${key}`);
+    assert(!walk(fields, item => item.id === `${key}-host-path`),
+      `${workflow.key}: no redundant second path control`);
+    const label = walk(fields, item => item.tagName === "label" && item.htmlFor === key);
+    const expected = key === "midi" ? "MIDI input" : "Melisma lyric input";
+    assert(label.children[0].textContent === `${expected}: absolute local path `,
+      `${workflow.key}: unambiguous ${key} label`);
+    const help = document.getElementById(`${key}-help`).textContent;
+    for (const phrase of ["machine running the Melisma web server", "does not read or upload",
+      "Preview validates", "same retained path"]) {
+      assert(help.includes(phrase), `${workflow.key}: ${key} explains ${phrase}`);
+    }
+  }
+  for (const stale of ["optional filename metadata", "Selected filename", "host path unavailable"]) {
+    assert(!collect(fields, item => item.textContent?.includes(stale)).length,
+      `${workflow.key}: no stale picker explanation`);
+  }
+}
+
+async function executionAssertions() {
+  const markup = '<script>alert("not HTML")</script> & stdout\n  indentation';
+  const record = {
+    id: "a".repeat(32), tool: "fixture", operation: "abc", phase: "running",
+    complete: false, success: false, can_stop: true,
+    submitted_at: "2026-10-16T00:00:00+00:00", completed_at: null, duration: 1,
+    stop_requested: false,
+    command: {
+      executable: "/fixture/tool", arguments: ["space here", "", "<b>literal</b>"],
+      cwd: "/fixture", display: "'/fixture/tool' 'space here' '' '<b>literal</b>'",
+    },
+    expected: [{ path: "/fixture/new.abc", kind: "abc" }], metadata: {},
+    process: {
+      state: "running", pid: 123, started_at: "2026-10-16T00:00:00+00:00",
+      completed_at: null, exit_status: null, signal: null, escalated: false,
+      stdout: markup, stderr: "separate stderr\n", error: null,
+      stdout_bytes: 100, stderr_bytes: 16, stdout_truncated: true, stderr_truncated: false,
+      stdout_complete: false, stderr_complete: false,
+    },
+    errors: ["validation detail"], artifacts: [], completion: null,
+    validation_processes: [], active_validation: null,
+  };
+  const container = document.getElementById("execution-console");
+  Object.defineProperty(Element.prototype, "innerHTML", {
+    set() { throw new Error("HTML output interpretation is forbidden"); },
+  });
+  selectRun(record.id);
+  renderRun(record);
+  const outputs = collect(container, item => item.tagName === "pre");
+  assert(outputs.some(item => item.textContent === markup), "stdout preserved exactly as text");
+  assert(outputs.some(item => item.textContent === "separate stderr\n"), "stderr has its own pre");
+  assert(!outputs.some(item => item.textContent.includes(markup) &&
+    item.textContent.includes("separate stderr")), "Streams never flattened together");
+  assert(collect(container, item => item.textContent?.includes("TRUNCATED")).length,
+    "Truncation visibly reported");
+  assert(collect(container, item => item.textContent?.includes("console only")).length,
+    "Console truncation does not imply an incomplete artifact");
+  assert(collect(container, item => item.textContent?.includes("awaiting EOF or incomplete")).length,
+    "Pending or incomplete capture visibly distinguished from EOF");
+  assert(!document.getElementById("stop-run").disabled, "Stop enabled for live child");
+  for (const label of ["Copy stdout", "Copy stderr", "Copy Display-only shell command",
+    "Copy Diagnostics and artifacts"]) {
+    const copy = walk(container, item => item.textContent === label);
+    await copy.trigger("click");
+    assert(!copy.disabled, "Copy pending state is cleared");
+  }
+  assert(copied[0] === markup && copied[1] === "separate stderr\n", "Copy is faithful");
+  assert(copied[2] === record.command.display, "Display command is copyable only");
+  assert(copied[3].includes("validation detail"), "Useful diagnostics copied");
+
+  const replies = [];
+  fetch = async (path, options) => {
+    requests.push({ path, options });
+    const reply = replies.shift();
+    if (reply instanceof Error) throw reply;
+    assert(reply, `Unexpected fetch ${path}`);
+    return { ok: reply.status < 400, status: reply.status, async json() { return reply.body; } };
+  };
+  replies.push({ status: 200, body: record });
+  await pollRun(record.id);
+  assert(timers.size === 1, "Live run schedules one bounded poll");
+  const complete = structuredClone(record);
+  complete.complete = true;
+  complete.phase = "complete";
+  complete.can_stop = false;
+  complete.process.state = "exited";
+  complete.process.exit_status = 7;
+  complete.process.stdout_complete = true;
+  complete.process.stderr_complete = true;
+  replies.push({ status: 200, body: complete });
+  await pollRun(record.id);
+  assert(timers.size === 0, "Terminal run stops polling");
+  assert(document.getElementById("stop-run").disabled, "Completed Stop is disabled");
+  assert(collect(container, item => item.textContent?.includes("complete (EOF)")).length,
+    "Actual capture EOF visibly reported");
+  replies.push(new Error("transport unavailable"));
+  await pollRun(record.id);
+  assert(document.getElementById("run-status").textContent.includes("Polling failed"),
+    "Polling errors visible, not success-shaped");
+  assert(timers.size === 0, "Failed poll does not retry indefinitely");
+
+  definition.execution_enabled = true;
+  csrf = "fixture-token";
+  for (const workflow of definition.workflows) {
+    selector.value = workflow.key;
+    render(workflow);
+    if (workflow.operation) assertExecutionInputs(workflow);
+    assert(document.getElementById("execution-actions").hidden === !workflow.operation,
+      `${workflow.key}: execution actions hidden for unsupported workflows`);
+    operationPending(true);
+    assert(document.getElementById("preview-operation").disabled,
+      `${workflow.key}: pending state disables Preview`);
+    operationPending(false);
+    assert(document.getElementById("preview-operation").disabled === !workflow.operation,
+      `${workflow.key}: released Preview matches selected-workflow executability`);
+  }
+  for (const mode of ["abc", "ustx"]) {
+    selector.value = `generate-${mode}`;
+    await selector.trigger("change");
+    const paths = { midi: `/fixture/${mode}-input.mid`, lyrics: `/fixture/${mode}-lyrics.txt` };
+    for (const [key, path] of Object.entries(paths)) {
+      const input = document.getElementById(key);
+      input.value = path;
+      await input.trigger("input");
+    }
+    const output = document.getElementById(`${mode}_output`);
+    output.value = `/fixture/new.${mode}`;
+    await output.trigger("input");
+    for (const key of ["midi", "lyrics"]) {
+      replies.push({ status: 200, body: {
+        ...record, preview_id: "preview-token", publication: "Exclusive publication",
+      } });
+      await previewOperation();
+      assert(previewId === "preview-token", `${mode}: validated preview retained`);
+      const draft = JSON.parse(requests.at(-1).options.body);
+      assert(draft.workflow === `generate-${mode}` &&
+        draft.inputs.midi === paths.midi && draft.inputs.lyrics === paths.lyrics,
+      `${mode}: Preview submits only explicitly entered execution paths`);
+      assert(!("argv" in draft) && !("executable" in draft), "Browser sends no raw command");
+      assert(!document.getElementById("start-operation").disabled, "Start enabled after preview");
+      const input = document.getElementById(key);
+      paths[key] += ".changed";
+      input.value = paths[key];
+      await input.trigger("input");
+      assert(previewId === undefined && document.getElementById("start-operation").disabled,
+        `${mode}: changing ${key} invalidates Preview`);
+      assert(!document.getElementById("command-preview").children.length, "Stale preview cleared");
+    }
+  }
+  selector.value = "generate-abc";
+  await selector.trigger("change");
+  const abcPath = document.getElementById("midi").value;
+  replies.push({ status: 200, body: {
+    ...record, preview_id: "preview-token", publication: "Exclusive publication",
+  } });
+  await previewOperation();
+  assert(previewId === "preview-token", "Validated preview retained");
+  selector.value = "generate-ustx";
+  await selector.trigger("change");
+  assert(previewId === undefined && document.getElementById("start-operation").disabled,
+    "Switching workflows invalidates Preview");
+  assert(document.getElementById("midi").value === values.get("generate-ustx:midi:host") &&
+    document.getElementById("midi").value !== abcPath, "Workflow path values remain separate");
+  selector.value = "generate-abc";
+  await selector.trigger("change");
+  assert(document.getElementById("midi").value === abcPath, "Explicit paths survive safe workflow switching");
+  assert(!document.getElementById("command-preview").children.length, "Stale preview cleared");
+  replies.push({ status: 422, body: { error: "input rejected" } });
+  await previewOperation();
+  assert(document.getElementById("operation-status").textContent.includes("Preview failed"),
+    "Preview failures visibly rejected");
+  assert(!operationBusy && !fields.disabled, "Controls re-enabled after preview failure");
+
+  previewId = "start-token";
+  replies.push({ status: 202, body: record }, { status: 200, body: { runs: [record] } },
+    { status: 200, body: complete });
+  await startOperation();
+  const submission = requests.find(item =>
+    item.path === "/api/runs" && item.options?.method === "POST");
+  assert(JSON.stringify(JSON.parse(submission.options.body)) ===
+    '{"preview_id":"start-token"}', "Start submits only exact preview identity");
+  assert(previewId === undefined && !operationBusy, "Start consumes preview");
+  replies.push({ status: 200, body: complete });
+  await stopRun();
+  const stop = requests.find(item => item.path.endsWith("/stop"));
+  assert(JSON.parse(stop.options.body) && !stop.options.body.includes("pid"),
+    "Stop targets selected run ID, never arbitrary PID");
+  assert(!runRequest, "Stop pending state released");
+  assert(timers.size === 0, "Stop completion leaves no polling timer");
+
+  previewId = "lost-response";
+  replies.push(new Error("response lost"));
+  await startOperation();
+  assert(document.getElementById("operation-status").textContent.includes("Refresh session runs"),
+    "Lost start response never automatically resubmits");
+  const before = copied.length;
+  navigator.clipboard.writeText = async () => { throw new Error("denied"); };
+  await copyButton("Copy stdout", markup).trigger("click");
+  assert(copied.length === before &&
+    document.getElementById("run-status").textContent.includes("Copy failed"), "Copy failures visible");
+  print("Execution console, trust-boundary, copy and polling assertions passed");
+}
+const loop = new imports.gi.GLib.MainLoop(null, false);
+let executionFailure;
+executionAssertions().then(
+  () => loop.quit(),
+  error => { executionFailure = error; loop.quit(); },
+);
+loop.run();
+if (executionFailure) throw executionFailure;

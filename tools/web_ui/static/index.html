@@ -10,8 +10,8 @@
 <body>
   <main>
     <h1>Melisma workflows</h1>
-    <p>Read-only UI foundation. No commands, uploads, file inspection, or
-      configuration writes. Form availability does not mean runtime readiness.</p>
+    <p>Local ABC/USTX command preview and execution. No uploads or configuration
+      writes. Form availability does not mean runtime readiness.</p>
     <p id="status" role="status">Loading workflow definitions...</p>
     <button id="refresh" type="button" disabled>Refresh configured capabilities (read-only)</button>
     <p id="refresh-status" role="status"></p>
@@ -22,8 +22,28 @@
       <p id="availability"></p>
       <p id="readiness"></p>
       <section id="capabilities" aria-label="Supplied capability evidence"></section>
-      <div id="fields"></div>
+      <fieldset id="fields"></fieldset>
       <section id="artifacts" aria-label="Output artifacts"></section>
+      <section id="execution-actions" aria-label="Operation preview">
+        <p>Explicit local paths authorize input reads and exclusive artifact creation.
+          Shell text is display-only; execution uses a structured argument array.</p>
+        <button id="preview-operation" type="button" disabled>Preview operation</button>
+        <button id="start-operation" type="button" disabled>Start previewed operation</button>
+        <p id="operation-status" role="status"></p>
+        <div id="command-preview"></div>
+      </section>
+    </section>
+    <section aria-label="Current-session execution console">
+      <h2>Execution console</h2>
+      <p>Current server session only: at most 32 runs, 4 active; oldest completed
+        runs are evicted. Each stream retains its first 1 MiB; truncation is explicit.
+        Stop targets only the selected owned child, not its descendants.</p>
+      <button id="refresh-runs" type="button">Refresh session runs</button>
+      <label for="session-runs">Retained runs (submission order)</label>
+      <select id="session-runs"></select>
+      <button id="stop-run" type="button" disabled>Stop selected run</button>
+      <p id="run-status" role="status"></p>
+      <div id="execution-console"></div>
     </section>
     <section aria-label="Tool configuration preview">
       <h2>Tool configuration (unsaved editor/preview)</h2>

@@ -89,9 +89,17 @@ class ToolAdapter:
                 error=f"refusing existing outputs: {occupied}",
             )
         else:
-            process = runner.run(operation.command)
+            process = self.run(operation, runner)
+        return self.finish(operation, process, runner)
+
+    def run(self, operation: Operation, runner: ProcessRunner) -> ProcessResult:
+        return runner.run(operation.command)
+
+    def finish(
+        self, operation: Operation, process: ProcessResult, runner: ProcessRunner
+    ) -> OperationResult:
         artifacts = [inspect_artifact(item) for item in operation.expected]
-        errors: list[str] = []
+        errors = [process.publication_error] if process.publication_error else []
         checks: list[ProcessResult] = []
         for index, artifact in enumerate(artifacts):
             if not artifact.valid:
@@ -129,6 +137,7 @@ class MelismaAdapter(ToolAdapter):
         singer: str | None = None,
         phonemizer: str | None = None,
         renderer: str | None = None,
+        publish_stdout: bool = False,
     ) -> Operation:
         if mode not in self.operations:
             raise ValueError(f"unsupported Melisma operation: {mode}")
@@ -166,7 +175,20 @@ class MelismaAdapter(ToolAdapter):
             output = new_output(output, self.cwd)
             expected = (ExpectedArtifact(output, mode),)
             arguments = ("--format", mode, *options, str(midi), str(lyrics), str(output))
+        if publish_stdout:
+            if mode == "render-inputs":
+                raise ValueError("stdout publication requires a single-file mode")
+            return self._operation(
+                mode, arguments[:-1], expected,
+                metadata=(("stdout_artifact", str(output)),),
+            )
         return self._operation(mode, arguments, expected)
+
+    def run(self, operation: Operation, runner: ProcessRunner) -> ProcessResult:
+        destination = dict(operation.metadata).get("stdout_artifact")
+        if destination is not None:
+            return runner.run(operation.command, stdout_artifact=Path(destination))
+        return super().run(operation, runner)
 
 
 class OpenUtauAdapter(ToolAdapter):

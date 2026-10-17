@@ -15,4 +15,9 @@ input[type="checkbox"] { width: auto; }
 button { font: inherit; margin: .5rem .5rem .5rem 0; padding: .5rem; }
 .configuration-group { border-left: 1px solid #888; margin: 1rem 0; padding-left: 1rem; }
 #artifacts { border-top: 1px solid #888; margin-top: 2rem; }
+fieldset { border: 0; padding: 0; min-width: 0; }
+pre { white-space: pre-wrap; overflow: auto; max-height: 24rem; overflow-wrap: anywhere;
+  border: 1px solid #888; padding: .75rem; }
+#execution-console { border-top: 1px solid #888; }
+button:disabled { opacity: .6; }
 [hidden] { display: none !important; }

@@ -1,4 +1,4 @@
-"""Issue #5 foundation: fixed local routes and forms, never tool execution."""
+"""Workflow forms and read-only routes remain non-executing without submission."""
 
 import http.client
 import ipaddress
@@ -291,7 +291,8 @@ class ControlModelTests(OfflineTests):
                 self.assertIn("not a reusable absolute host path", field.path_limitation)
                 self.assertIn("not read or uploaded", field.path_limitation)
             self.assertEqual(output.selection, "output-name")
-            self.assertIn("not a selected host path", output.path_limitation)
+            self.assertIn("absolute local path", output.path_limitation)
+            self.assertIn("without overwrite", output.path_limitation)
 
     def test_dependencies_use_explicit_singer_metadata_and_do_not_relabel(self):
         workflow = workflow_definitions(reports=dependency_reports())[2]

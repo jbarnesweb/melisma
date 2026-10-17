@@ -1,5 +1,93 @@
 # Phase 1 workflow and tool-interface contract
 
+## Issue #6 implementation extension (October 16, 2026)
+
+The original inspection below remains historical evidence, not a claim of
+current runtime readiness. Issue #2 supplied the adapter/process framework;
+Issue #5 supplied workflow-aware forms; Issue #6 adds the following bounded
+local execution contract. See README's "Command preview, session records, and
+Stop" for API payloads, configuration examples and test commands.
+
+Only Generate ABC and Generate USTX are connected to web execution. Their
+trusted construction path is `ExecutionAPI.construct -> MelismaAdapter.build
+(publish_stdout=True) -> immutable Operation/Command`. Preview retains this
+operation under an opaque ID; Start consumes it, rechecking the selected
+nonempty/readable local input paths without changing the command. At most 32
+pending previews survive, oldest first evicted. Neither form availability nor
+configured source presence proves executable identity, input compatibility,
+installed resources or audio readiness. Browser configuration drafts do not
+change active executable/root authorization. Exactly one configured local
+Melisma source with an explicit executable and supported contract is required.
+
+The command preview includes executable, ordered arguments, cwd, display-only
+shell quoting, expected artifact records and operation metadata. Execution
+always uses structured argv and `shell=False`, never the display string.
+Environment overrides and their values are omitted from preview, run and
+validation-process command documents.
+Browser submissions cannot select executable, argv, shell, cwd, environment
+or arbitrary PID. Only explicitly entered absolute input/output paths and
+existing ABC/USTX metadata fields are accepted. Browser file-picker names are
+not converted to local host paths. These deliberate local file reads/writes
+are not a sandbox against an untrusted operator.
+
+For the web's single-file outputs, Melisma's existing stdout mode avoids the
+legacy CLI's overwriting `fopen("w")` path. The adapter exclusively creates the
+expected destination after process success and complete capture, refusing
+occupied paths including symlinks/publication races. The display command prints the artifact;
+the adapter publication step is separately documented in metadata. No C flags
+or command templates are invented. Publication copies the complete raw binary
+stdout spool, never the bounded or decoded console prefix. Console truncation
+does not change the artifact's functional output-size limit.
+Existing internal adapter file-output behavior remains unchanged.
+
+`ProcessState` now includes created, starting, running, exited, signalled,
+start-failed, rejected and cancelled-before-start. `ProcessResult` retains
+separate stdout/stderr, PID, exit/signal, original start error, Stop intent,
+escalation, UTC ISO 8601 submission/start/completion times, monotonic duration,
+byte counts, stream truncation and EOF-completeness flags. Process exit is not
+operation success: artifact inspection, validation errors, completion metadata and validation
+subprocess records remain separate. Run `complete` is published after adapter
+finalization; phase `validating` can follow primary process exit.
+
+`OwnedChild` is the shared process primitive for synchronous calls, playback
+and asynchronous session execution. It drains two independent pipes, retaining
+the first 1 MiB of each as a bounded console prefix with explicit truncation.
+ProcessRunner and session adapter execution separately spool complete raw
+stdout/stderr into private temporary files, deleted at command finalization.
+All machine parsers receive complete text; retained session/API primary and
+validation records remain bounded. Spooling uses disk proportional to output;
+machine text transiently uses memory. Resources/filesystem capacity, not
+console retention, bounds functional output. Diagnostic-only playback capture
+does not need complete spools. Captured console data survives completion.
+The synchronized session registry admits at most four active runs and retains
+at most 32 runs in submission order, evicting the oldest submitted completed
+run first and never evicting a running child. Reads return snapshots.
+`GET /api/runs` lists retained records; `GET /api/runs/ID` provides incremental
+output. UI polling uses 500 ms and ends when complete or visibly failed.
+No logs survive server restart.
+
+Guarded JSON POST routes are `/api/operations/preview`, `/api/runs` and
+`/api/runs/ID/stop`, in addition to existing configuration/refresh routes.
+They retain exact loopback Host, same-origin/CSRF, bounded body and strict JSON
+validation. Stop accepts only an empty object, targets the exact owned child,
+waits up to one second for graceful termination, escalates only if necessary,
+and reaps it. Internal OwnedChild retains its bounded `(0,5]` stop timeout.
+Stop intent is not conflated with exit code (including a handled exit 0);
+repeated Stop/completed-run Stop is safe. Finalization cannot be rolled back
+by late Stop. Shutdown closes admission, stops children and joins workers.
+Descendants are not killed. After observing child exit, readers drain and wait
+for EOF for up to 0.5 seconds, including idle intervals. An inherited writer
+preventing EOF produces an explicit incomplete-capture error, closes the reader,
+retains byte counts/prefix/truncation state and prevents success/publication.
+EOF completeness and console truncation are independent.
+Output and diagnostic DOM rendering uses text, never HTML interpretation.
+
+Issue #7 retains responsibility for cross-session history, persistent artifact
+tracking, provenance and stale-state relationships. Issue #9 retains all
+tool-specific audio UI execution, including playback and native/helper YuE2;
+those contracts remain distinct and unavailable here. Issue #10 retains
+full-pipeline coordination. Future MIDI generation remains unresolved.
+
 Discovery for GitHub Issue #1, inspected **October 13, 2026**. This is a
 snapshot of the local interfaces, not a harness implementation or an
 end-to-end rendering acceptance test. No adapters, UI, orchestration code,
