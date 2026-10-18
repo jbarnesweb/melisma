@@ -138,12 +138,22 @@ class ProcessResult:
 
 
 @dataclass(frozen=True)
+class OperationInput:
+    role: str
+    path: Path
+    type: str = "file"
+    artifact_id: str | None = None
+    revision: str | None = None
+
+
+@dataclass(frozen=True)
 class Operation:
     tool: str
     name: str
     command: Command
     expected: tuple[ExpectedArtifact, ...]
     metadata: tuple[tuple[str, str], ...] = ()
+    inputs: tuple[OperationInput, ...] = ()
 
 
 @dataclass(frozen=True)

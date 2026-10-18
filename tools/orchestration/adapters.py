@@ -17,6 +17,7 @@ from .process import (
     Command,
     ExpectedArtifact,
     Operation,
+    OperationInput,
     OperationResult,
     ProcessResult,
     ProcessRunner,
@@ -67,13 +68,14 @@ class ToolAdapter:
         *,
         metadata: tuple[tuple[str, str], ...] = (),
         environment: tuple[tuple[str, str | None], ...] = (),
+        inputs: tuple[OperationInput, ...] = (),
     ) -> Operation:
         if name not in self.operations:
             raise ValueError(f"unsupported {self.tool} operation: {name}")
         return Operation(
             self.tool, name,
             Command(self.executable, arguments, self.cwd, environment),
-            expected, metadata,
+            expected, metadata, inputs,
         )
 
     def execute(self, operation: Operation, runner: ProcessRunner) -> OperationResult:
@@ -143,6 +145,8 @@ class MelismaAdapter(ToolAdapter):
             raise ValueError(f"unsupported Melisma operation: {mode}")
         midi = existing_input(midi, self.cwd)
         lyrics = existing_input(lyrics, self.cwd)
+        inputs = (OperationInput("midi", midi, "midi"),
+                  OperationInput("lyrics", lyrics, "lyrics"))
         metadata = (("--singer", singer), ("--phonemizer", phonemizer),
                     ("--renderer", renderer))
         if mode not in ("ustx", "render-inputs") and any(
@@ -181,8 +185,9 @@ class MelismaAdapter(ToolAdapter):
             return self._operation(
                 mode, arguments[:-1], expected,
                 metadata=(("stdout_artifact", str(output)),),
+                inputs=inputs,
             )
-        return self._operation(mode, arguments, expected)
+        return self._operation(mode, arguments, expected, inputs=inputs)
 
     def run(self, operation: Operation, runner: ProcessRunner) -> ProcessResult:
         destination = dict(operation.metadata).get("stdout_artifact")
@@ -203,6 +208,7 @@ class OpenUtauAdapter(ToolAdapter):
         return self._operation(
             "render", ("render", str(ustx), "--out", str(output)),
             (ExpectedArtifact(output, "audio"),),
+            inputs=(OperationInput("ustx", ustx, "ustx"),),
         )
 
 
@@ -250,6 +256,8 @@ class FFmpegAdapter(ToolAdapter):
              "-c:a", "pcm_s16le", str(output)),
             (ExpectedArtifact(output, "audio"),),
             metadata=(("duration", duration), ("normalize", str(normalize))),
+            inputs=(OperationInput("instrumental", instrumental, "instrumental-audio"),
+                    OperationInput("vocal", vocal, "vocal-audio")),
         )
 
     def complete(self, result: OperationResult, runner: ProcessRunner) -> OperationResult:

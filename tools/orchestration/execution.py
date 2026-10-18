@@ -10,6 +10,7 @@ from dataclasses import fields, replace
 from pathlib import Path
 
 from .adapters import ToolAdapter
+from .artifact_catalog import ArtifactCatalog, CatalogError, input_document
 from .process import (
     LIVE_STATES, OUTPUT_LIMIT, Command, Operation, OperationResult, OwnedChild,
     ProcessResult, ProcessRunner, ProcessState, console_result, utc_now,
@@ -32,6 +33,7 @@ def operation_document(operation: Operation) -> dict[str, object]:
             for item in operation.expected
         ],
         "metadata": dict(operation.metadata),
+        "inputs": [input_document(item) for item in operation.inputs],
     }
 
 
@@ -48,7 +50,10 @@ def process_document(result: ProcessResult) -> dict[str, object]:
 class Execution(ProcessRunner):
     """Adapter runner tracking a primary command and any validation subprocesses."""
 
-    def __init__(self, operation: Operation, *, output_limit: int) -> None:
+    def __init__(
+        self, operation: Operation, *, output_limit: int,
+        catalog: ArtifactCatalog | None = None,
+    ) -> None:
         self.id = uuid.uuid4().hex
         self.operation = operation
         self.output_limit = output_limit
@@ -66,6 +71,8 @@ class Execution(ProcessRunner):
         self.duration: float | None = None
         self.thread: threading.Thread | None = None
         self.validation: list[ProcessResult] = []
+        self.catalog = catalog
+        self.catalog_error: str | None = None
 
     @property
     def is_complete(self) -> bool:
@@ -156,6 +163,14 @@ class Execution(ProcessRunner):
             )
             self.completed_at = utc_now()
             self.duration = time.monotonic() - self.began
+            if self.catalog is not None:
+                try:
+                    self.catalog.register_result(self.result, self.id)
+                    self.catalog.register_diagnostics(self.id, self.snapshot())
+                except (CatalogError, OSError, ValueError) as error:
+                    self.catalog_error = f"Artifact registration failed: {error}"
+                finally:
+                    self.catalog.end(self.operation)
 
     def stop(self, timeout: float = 1.0) -> dict[str, object]:
         with self.lock:
@@ -190,6 +205,8 @@ class Execution(ProcessRunner):
                 "submitted_at": self.created, "completed_at": self.completed_at,
                 "duration": self.duration if self.duration is not None else time.monotonic() - self.began,
                 "success": result.success and not self.stop_requested if result else False,
+                "catalog_error": self.catalog_error,
+                "stale_inputs": self.catalog.changed_inputs(self.id) if self.catalog else [],
                 "artifacts": [] if result is None else [
                     {
                         "path": str(item.expected.path), "kind": item.expected.kind,
@@ -219,6 +236,7 @@ class RunRegistry:
     def __init__(
         self, *, max_runs: int = 32, max_active: int = 4,
         output_limit: int = OUTPUT_LIMIT,
+        catalog: ArtifactCatalog | None = None,
     ) -> None:
         if not 1 <= max_active <= max_runs <= 32 or not 0 < output_limit <= OUTPUT_LIMIT:
             raise ValueError("invalid session retention bounds")
@@ -226,6 +244,7 @@ class RunRegistry:
         self.lock = threading.RLock()
         self.runs: OrderedDict[str, Execution] = OrderedDict()
         self.closed = False
+        self.catalog = catalog
 
     def start(self, adapter: ToolAdapter, operation: Operation) -> dict[str, object]:
         with self.lock:
@@ -237,10 +256,14 @@ class RunRegistry:
             paths = {item.path for run in active for item in run.operation.expected}
             if any(item.path in paths for item in operation.expected):
                 raise RegistryFull("An active run already owns this output destination")
+            if any(item.path in paths for item in operation.inputs):
+                raise RegistryFull("An active run owns an input destination")
+            if self.catalog is not None:
+                operation = self.catalog.begin(operation)
             if len(self.runs) >= self.max_runs:
                 oldest = next(key for key, run in self.runs.items() if run.is_complete)
                 del self.runs[oldest]
-            run = Execution(operation, output_limit=self.output_limit)
+            run = Execution(operation, output_limit=self.output_limit, catalog=self.catalog)
             self.runs[run.id] = run
             run.thread = threading.Thread(target=run.execute, args=(adapter,), daemon=True)
             snapshot = run.snapshot()

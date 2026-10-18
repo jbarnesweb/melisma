@@ -9,7 +9,7 @@ from pathlib import Path
 from .adapters import ToolAdapter
 from .artifacts import existing_input
 from .process import (
-    Operation, OperationResult, OwnedChild, ProcessResult, ProcessRunner, ProcessState,
+    Operation, OperationInput, OperationResult, OwnedChild, ProcessResult, ProcessRunner, ProcessState,
 )
 
 
@@ -92,6 +92,7 @@ class FFplayAdapter(ToolAdapter):
              "-vn", "-i", str(input_path)),
             (),
             metadata=(("input", str(input_path)), ("stop_policy", "owned-child")),
+            inputs=(OperationInput("audio", input_path, "audio"),),
         )
 
     def execute(self, operation: Operation, runner: ProcessRunner) -> OperationResult:

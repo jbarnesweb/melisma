@@ -9,7 +9,9 @@ from pathlib import Path
 
 from .adapters import ToolAdapter
 from .artifacts import absolute, existing_input, inspect_artifact, new_output, read_json
-from .process import ArtifactRecord, ExpectedArtifact, Operation, OperationResult, ProcessRunner
+from .process import (
+    ArtifactRecord, ExpectedArtifact, Operation, OperationInput, OperationResult, ProcessRunner,
+)
 
 
 NATIVE_FILES = (
@@ -154,8 +156,11 @@ class NativeYuE2Adapter(ToolAdapter):
             "--model", str(absolute(model, self.cwd)), "--vae", str(absolute(vae, self.cwd)),
             "--device", device, "--offline",
         ]
+        inputs = ()
         if abc is not None:
-            arguments.extend(("--abc-file", str(existing_input(abc, self.cwd))))
+            abc = existing_input(abc, self.cwd)
+            arguments.extend(("--abc-file", str(abc)))
+            inputs = (OperationInput("abc", abc, "abc"),)
         root = output / run_id
         expected = (
             ExpectedArtifact(root / "audio.flac", "audio"),
@@ -166,6 +171,7 @@ class NativeYuE2Adapter(ToolAdapter):
             metadata=(("contract_version", self.contract_version), ("cot", cot),
                       ("result_root", str(root)), ("stage", "audio")),
             environment=(("PYTHONPATH", str(self.cwd / "src")), ("PYTHONHOME", None)),
+            inputs=inputs,
         )
 
     def complete(self, result: OperationResult, runner: ProcessRunner) -> OperationResult:
@@ -185,12 +191,14 @@ class InstrumentalAdapter(ToolAdapter):
     def _helper_operation(
         self, name: str, arguments: tuple[str, ...],
         expected: tuple[ExpectedArtifact, ...], root: Path,
+        *, inputs: tuple[OperationInput, ...] = (),
     ) -> Operation:
         return self._operation(
             name, ("-B", str(self.script), *arguments), expected,
             metadata=(("contract_version", self.contract_version), ("result_root", str(root))),
             # Never inject the current 0.1.6 source into the pinned interpreter.
             environment=(("PYTHONPATH", None), ("PYTHONHOME", None)),
+            inputs=inputs,
         )
 
     def prepare(
@@ -208,6 +216,7 @@ class InstrumentalAdapter(ToolAdapter):
              "--output", str(output), "--prepare-only", "--offline"),
             (ExpectedArtifact(output / "prepared" / "prepared-manifest.json", "json"),),
             output,
+            inputs=(OperationInput("abc", abc, "abc"),),
         )
 
     def generate(
@@ -228,13 +237,21 @@ class InstrumentalAdapter(ToolAdapter):
              ExpectedArtifact(output / "summary.json", "json"),
              ExpectedArtifact(output / "delivery-manifest.json", "json")),
             output,
+            inputs=(OperationInput(
+                "prepared-manifest", prepared / "prepared-manifest.json", "configuration",
+            ),),
         )
 
     def verify(self, directory: Path) -> Operation:
         directory = absolute(directory, self.cwd)
         if not directory.is_dir():
             raise ValueError("verification directory must exist")
-        return self._helper_operation("verify", ("verify", str(directory)), (), directory)
+        return self._helper_operation(
+            "verify", ("verify", str(directory)), (), directory,
+            inputs=(OperationInput(
+                "delivery-manifest", directory / "delivery-manifest.json", "configuration",
+            ),),
+        )
 
     def complete(self, result: OperationResult, runner: ProcessRunner) -> OperationResult:
         root = Path(dict(result.operation.metadata)["result_root"])

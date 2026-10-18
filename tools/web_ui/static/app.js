@@ -200,6 +200,38 @@ function render(workflow) {
     help.id = `${field.key}-help`;
     input.setAttribute("aria-describedby", help.id);
     fields.append(label, input, help);
+    if (executionPath && field.artifact_types?.length) {
+      const recent = document.createElement("select");
+      recent.id = `${field.key}-recent-artifact`;
+      recent.setAttribute("aria-label", `Recent compatible ${field.label}`);
+      recent.append(newOption("", "Find recent artifacts, or enter the absolute path above"));
+      const find = button("Find recent compatible artifacts", async () => {
+        find.disabled = true;
+        try {
+          const result = await post("/api/artifacts/compatible", {
+            workflow: workflow.key, field: field.key,
+          });
+          recent.replaceChildren(newOption("", "Choose a compatible artifact (readiness unknown)"));
+          for (const entry of result.artifacts) {
+            recent.append(newOption(entry.path, `${entry.type}: ${entry.path}`));
+          }
+          help.textContent = `${result.artifacts.length} compatible artifacts found. ` +
+            "Selection copies an explicit local path; manual entry remains available. " +
+            "Type compatibility is not tool or resource readiness.";
+        } catch (error) {
+          help.textContent = `Artifact lookup failed: ${error.message}`;
+        } finally {
+          find.disabled = false;
+        }
+      });
+      recent.addEventListener("change", () => {
+        if (!recent.value) return;
+        input.value = recent.value;
+        values.set(valueKey, recent.value);
+        invalidatePreview();
+      });
+      fields.append(recent, find);
+    }
     if (field.path_limitation && !executionPath) {
       fields.append(paragraph(field.path_limitation, "help"));
     }
@@ -418,6 +450,7 @@ async function loadUI() {
     csrf = ui.csrf;
     render(definition.workflows.find(workflow => workflow.key === selector.value));
     await refreshRuns();
+    await refreshArtifacts();
     refreshStatus.textContent = `${ui.refresh.state}: ${ui.refresh.reason}`;
     refreshButton.disabled = false;
     refreshButton.addEventListener("click", async () => {
@@ -607,10 +640,21 @@ function renderRun(record) {
     artifacts: record.artifacts, completion_metadata: record.completion,
     validation_processes: record.validation_processes,
     active_validation: record.active_validation,
+    artifact_history_error: record.catalog_error,
+    stale_inputs: record.stale_inputs,
   };
   textSection(container, "Process start/rejection/capture diagnostic", process.error ?? "None");
   textSection(container, "Operation validation errors", JSON.stringify(record.errors, null, 2));
   textSection(container, "Inspected artifacts", JSON.stringify(record.artifacts, null, 2));
+  if (record.catalog_error) {
+    container.append(paragraph(record.catalog_error, "unavailable"));
+  }
+  if (record.stale_inputs?.length) {
+    container.append(paragraph(
+      `Stale input revision: ${record.stale_inputs.join(", ")}. Historical execution result unchanged.`,
+      "unavailable",
+    ));
+  }
   textSection(container, "Completion metadata", JSON.stringify(record.completion, null, 2));
   textSection(container, "Validation subprocesses", JSON.stringify(record.validation_processes, null, 2));
   if (record.active_validation) {
@@ -644,6 +688,7 @@ async function pollRun(id) {
     document.getElementById("run-status").textContent = record.complete ?
       "Run complete; polling stopped." : "Receiving output (500 ms polling).";
     schedulePoll(record);
+    if (record.complete) await refreshArtifacts();
   } catch (error) {
     if (id !== selectedRun || revision !== pollRevision) return;
     document.getElementById("run-status").textContent =
@@ -712,6 +757,165 @@ async function stopRun() {
     }
   }
 }
+
+let artifactDocument;
+let artifactView;
+let artifactViewRevision = 0;
+
+function newOption(value, text) {
+  const option = document.createElement("option");
+  option.value = value;
+  option.textContent = text;
+  return option;
+}
+
+function renderArtifactHistory(record) {
+  artifactDocument = record;
+  const choices = document.getElementById("recent-artifacts");
+  const selected = choices.value;
+  choices.replaceChildren(newOption("", "Choose an artifact to inspect"));
+  for (const entry of record.artifacts) {
+    choices.append(newOption(entry.id,
+      `${entry.type}: ${entry.path} (${entry.production_status}; ` +
+      `${entry.exists ? "exists" : "missing"}; valid: ${entry.valid ?? "unverified"})`));
+  }
+  choices.value = record.artifacts.some(entry => entry.id === selected) ? selected : "";
+  if (record.import_types) {
+    const typeSelector = document.getElementById("artifact-import-type");
+    const selectedType = typeSelector.value;
+    typeSelector.replaceChildren(
+      ...record.import_types.map(type => newOption(type, type)),
+    );
+    if (record.import_types.includes(selectedType)) typeSelector.value = selectedType;
+  }
+  const consumers = document.getElementById("artifact-consumers");
+  consumers.replaceChildren();
+  for (const run of record.consumers.filter(item => item.stale)) {
+    consumers.append(paragraph(
+      `${run.stage} / ${run.id}: stale input revision (${run.changed_inputs.join(", ")}). ` +
+      `Historical success: ${run.success}; no rerun scheduled.`,
+      "unavailable",
+    ));
+  }
+}
+
+async function refreshArtifacts(recheck = false) {
+  const status = document.getElementById("artifact-status");
+  try {
+    let record;
+    if (recheck) {
+      record = await post("/api/artifacts/refresh", {});
+    } else {
+      const response = await fetch("/api/artifacts", { cache: "no-store" });
+      record = await response.json();
+      if (!response.ok) throw new Error(record.error || `HTTP ${response.status}`);
+    }
+    renderArtifactHistory(record);
+    status.textContent = `${record.artifacts.length} artifacts. History: ${record.history_path}. ` +
+      (recheck ? "Existence rechecked." : "Last recorded observations; refresh to recheck.");
+    return true;
+  } catch (error) {
+    status.textContent = `Artifact history failed: ${error.message}`;
+    return false;
+  }
+}
+
+async function inspectArtifact() {
+  const revision = ++artifactViewRevision;
+  const id = document.getElementById("recent-artifacts").value;
+  const entry = artifactDocument?.artifacts.find(item => item.id === id);
+  artifactView = undefined;
+  document.getElementById("artifact-inspector").hidden = true;
+  document.getElementById("artifact-editor").hidden = true;
+  const details = document.getElementById("artifact-details");
+  details.replaceChildren();
+  if (!entry) return;
+  textSection(details, "Artifact metadata and source inputs", JSON.stringify(entry, null, 2));
+  details.append(copyButton("Copy artifact path", entry.path));
+  if (!["abc", "ustx", "lyrics", "ir", "configuration", "diagnostic", "text"].includes(entry.type)) {
+    details.append(paragraph("Binary artifact: use Copy artifact path to open/reveal it locally."));
+    return;
+  }
+  try {
+    const response = await fetch(`/api/artifacts/${id}/text`, { cache: "no-store" });
+    const view = await response.json();
+    if (!response.ok) throw new Error(view.error || `HTTP ${response.status}`);
+    if (revision !== artifactViewRevision) return;
+    artifactView = view;
+    document.getElementById("artifact-inspector").hidden = false;
+    document.getElementById("artifact-text").textContent = view.text;
+    document.getElementById("artifact-text-status").textContent = view.truncated ?
+      `TRUNCATED: first ${view.limit} bytes shown. Editing disabled; complete file unchanged.` :
+      `Complete UTF-8 text. ${view.editable ? "Read-only until Edit is selected." : "This artifact is read-only."}`;
+    document.getElementById("edit-artifact").disabled = !view.editable;
+  } catch (error) {
+    if (revision === artifactViewRevision) {
+      document.getElementById("artifact-status").textContent = `Inspection failed: ${error.message}`;
+    }
+  }
+}
+
+function beginArtifactEdit() {
+  if (!artifactView?.editable || artifactView.truncated) return;
+  document.getElementById("artifact-edit-text").value = artifactView.text;
+  document.getElementById("artifact-save-path").value = "";
+  document.getElementById("artifact-save-path").disabled = false;
+  document.getElementById("artifact-replace").checked = false;
+  document.getElementById("artifact-editor").hidden = false;
+}
+
+async function saveArtifact() {
+  if (!artifactView?.editable || artifactView.truncated) return;
+  const view = artifactView;
+  const save = document.getElementById("save-artifact");
+  save.disabled = true;
+  try {
+    const entry = await post(`/api/artifacts/${view.artifact.id}/save`, {
+      revision: view.artifact.revision,
+      text: document.getElementById("artifact-edit-text").value,
+      destination: document.getElementById("artifact-save-path").value,
+      replace: document.getElementById("artifact-replace").checked === true,
+    });
+    invalidatePreview();
+    if (!await refreshArtifacts()) return;
+    document.getElementById("recent-artifacts").value = entry.id;
+    await inspectArtifact();
+    document.getElementById("artifact-status").textContent =
+      "Text saved. Original preserved by Save As or backup; no dependent execution scheduled.";
+  } catch (error) {
+    document.getElementById("artifact-status").textContent = `Save failed: ${error.message}`;
+  } finally {
+    save.disabled = false;
+  }
+}
+
+document.getElementById("refresh-artifacts").addEventListener("click", () => refreshArtifacts(true));
+document.getElementById("recent-artifacts").addEventListener("change", inspectArtifact);
+document.getElementById("register-artifact").addEventListener("click", async event => {
+  const control = event.currentTarget;
+  control.disabled = true;
+  try {
+    await post("/api/artifacts/register", {
+      path: document.getElementById("artifact-import-path").value,
+      type: document.getElementById("artifact-import-type").value,
+    });
+    await refreshArtifacts();
+  } catch (error) {
+    document.getElementById("artifact-status").textContent = `Registration failed: ${error.message}`;
+  } finally {
+    control.disabled = false;
+  }
+});
+document.getElementById("edit-artifact").addEventListener("click", beginArtifactEdit);
+document.getElementById("artifact-replace").addEventListener("change", () => {
+  const replace = document.getElementById("artifact-replace").checked;
+  document.getElementById("artifact-save-path").disabled = replace;
+  document.getElementById("artifact-save-path").value = replace ? artifactView.artifact.path : "";
+});
+document.getElementById("save-artifact").addEventListener("click", saveArtifact);
+document.getElementById("discard-artifact").addEventListener("click", () => {
+  document.getElementById("artifact-editor").hidden = true;
+});
 
 document.getElementById("preview-operation").addEventListener("click", previewOperation);
 document.getElementById("start-operation").addEventListener("click", startOperation);

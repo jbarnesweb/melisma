@@ -8,7 +8,7 @@ from collections import OrderedDict
 from pathlib import Path
 
 from ..orchestration.adapters import MelismaAdapter
-from ..orchestration.artifacts import existing_input
+from ..orchestration.artifact_catalog import ArtifactCatalog
 from ..orchestration.capabilities import SourceKind
 from ..orchestration.configuration import Configuration
 from ..orchestration.execution import RunRegistry, operation_document
@@ -16,9 +16,12 @@ from ..orchestration.process import Operation
 
 
 class ExecutionAPI:
-    def __init__(self, configuration: Configuration) -> None:
+    def __init__(
+        self, configuration: Configuration, catalog: ArtifactCatalog | None = None,
+    ) -> None:
         self.configuration = configuration
-        self.registry = RunRegistry()
+        self.catalog = catalog or ArtifactCatalog()
+        self.registry = RunRegistry(catalog=self.catalog)
         self.lock = threading.Lock()
         self.previews: OrderedDict[str, tuple[MelismaAdapter, Operation]] = OrderedDict()
 
@@ -65,6 +68,7 @@ class ExecutionAPI:
 
     def preview(self, draft: dict[str, object]) -> dict[str, object]:
         adapter, operation = self.construct(draft)
+        operation = self.catalog.bind_inputs(operation)
         token = uuid.uuid4().hex
         with self.lock:
             if len(self.previews) >= 32:
@@ -84,9 +88,7 @@ class ExecutionAPI:
             if token not in self.previews:
                 raise KeyError("Preview expired or already submitted; preview again")
             adapter, operation = self.previews[token]
-            # Recheck local inputs without changing the previewed argv/cwd.
-            for value in operation.command.arguments[-2:]:
-                existing_input(Path(value), operation.command.cwd)
+            # The registry rechecks explicit provenance and consumed revisions.
             snapshot = self.registry.start(adapter, operation)
             del self.previews[token]
             return snapshot

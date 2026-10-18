@@ -34,6 +34,7 @@ class FieldDefinition:
     selection: str | None = None
     path_limitation: str | None = None
     dependency: DependencyDefinition | None = None
+    artifact_types: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -111,18 +112,37 @@ WORKFLOW_TOOLS = {
     "full-pipeline": tuple(CONTRACTS),
 }
 
+ARTIFACT_INPUT_TYPES = {
+    "generate-abc": {"midi": ("midi",), "lyrics": ("lyrics",)},
+    "generate-ustx": {"midi": ("midi",), "lyrics": ("lyrics",)},
+    "render-vocals": {"ustx": ("ustx",)},
+    "generate-yue2-audio": {"abc": ("abc",)},
+    "mix-audio": {"vocal": ("vocal-audio", "audio"),
+                  "instrumental": ("instrumental-audio",)},
+    "play-audio": {"audio": ("audio", "vocal-audio", "instrumental-audio", "yue2-audio", "mixed-audio")},
+}
+
+
+def accepted_artifact_types(workflow: str, field: str) -> tuple[str, ...]:
+    try:
+        return ARTIFACT_INPUT_TYPES[workflow][field]
+    except KeyError as error:
+        raise ValueError("Unknown workflow artifact input") from error
+
 
 MIDI = FieldDefinition(
     "midi", "Existing MIDI input", True, "input-path",
     "An existing compatible MIDI file: format 0, one track, positive PPQN, "
     "monophonic non-overlapping notes. This UI does not read or validate the file.",
     accept=".mid,.midi", selection="existing-file", path_limitation=PATH_LIMITATION,
+    artifact_types=("midi",),
 )
 LYRICS = FieldDefinition(
     "lyrics", "Melisma lyric input", True, "input-path",
     "Select an existing Melisma lyric file, not free-form song lyrics. "
     "This UI does not read or validate the file.",
     accept=".txt", selection="existing-file", path_limitation=PATH_LIMITATION,
+    artifact_types=("lyrics",),
 )
 
 
@@ -233,9 +253,8 @@ def workflow_definitions(
                 f"{kind}_output", kind,
                 views=(
                     ArtifactView(
-                        "raw-text", "Raw ABC text", State.UNAVAILABLE,
-                        "Raw artifact browsing is deferred to Issue #7; current run "
-                        "artifact existence, size and validity are reported in the console.",
+                        "raw-text", "Raw ABC text", State.SUPPORTED,
+                        "Open registered ABC files in Recent artifacts for text inspection.",
                     ),
                     ArtifactView(
                         "score", "Rendered musical score", State.UNAVAILABLE,

@@ -45,6 +45,38 @@
       <p id="run-status" role="status"></p>
       <div id="execution-console"></div>
     </section>
+    <section aria-label="Recent artifacts">
+      <h2>Recent artifacts</h2>
+      <p>Local artifact history survives console eviction and server restart.
+        Refresh checks current files. Type compatibility is not runtime readiness.</p>
+      <button id="refresh-artifacts" type="button">Refresh artifact history and existence</button>
+      <p id="artifact-status" role="status"></p>
+      <label for="artifact-import-path">Register existing artifact: absolute local path</label>
+      <input id="artifact-import-path" type="text">
+      <label for="artifact-import-type">Artifact type (explicitly supplied, not discovered)</label>
+      <select id="artifact-import-type"></select>
+      <button id="register-artifact" type="button">Register existing file (no upload)</button>
+      <label for="recent-artifacts">Registered files, newest first</label>
+      <select id="recent-artifacts"></select>
+      <div id="artifact-details"></div>
+      <div id="artifact-consumers"></div>
+      <section id="artifact-inspector" hidden>
+        <h3>Text inspection</h3>
+        <p id="artifact-text-status"></p>
+        <pre id="artifact-text"></pre>
+        <button id="edit-artifact" type="button" disabled>Edit text explicitly</button>
+        <fieldset id="artifact-editor" hidden>
+          <label for="artifact-edit-text">Text draft (nothing written until Save)</label>
+          <textarea id="artifact-edit-text" rows="14"></textarea>
+          <label for="artifact-save-path">Save As: new absolute local path</label>
+          <input id="artifact-save-path" type="text">
+          <label><input id="artifact-replace" type="checkbox">
+            Explicitly replace original instead (revision checked; backup preserved)</label>
+          <button id="save-artifact" type="button">Save text</button>
+          <button id="discard-artifact" type="button">Discard draft</button>
+        </fieldset>
+      </section>
+    </section>
     <section aria-label="Tool configuration preview">
       <h2>Tool configuration (unsaved editor/preview)</h2>
       <p>Only Issue #4 non-secret fields. Enter authentication reference names,

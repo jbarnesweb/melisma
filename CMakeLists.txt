@@ -79,6 +79,16 @@ if(BUILD_TESTING)
 	set_tests_properties(execution PROPERTIES
 		WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 	)
+	add_test(NAME artifacts
+		COMMAND ${Python3_EXECUTABLE} -B -m unittest
+			discover
+			-s ${CMAKE_CURRENT_SOURCE_DIR}/tests
+			-p test_artifacts.py
+			-v
+	)
+	set_tests_properties(artifacts PROPERTIES
+		WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+	)
 
 	add_executable(binder_test
 		tests/binder_test.c

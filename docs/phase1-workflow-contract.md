@@ -1,5 +1,37 @@
 # Phase 1 workflow and tool-interface contract
 
+## Issue #7 implementation extension (October 18, 2026)
+
+The local artifact catalog wraps the Issue #2 validation records and the Issue
+#6 registry; it does not replace adapters or add a scheduler. `Operation.inputs`
+records explicit input roles, paths, artifact IDs and consumed content revisions.
+Preview is read-only; Start checks revisions and registers inputs. Finalized
+results register producing operation/run/session, output validation and separate
+production status. Rejected occupied destinations are not claimed as outputs.
+Native YuE2 song audio remains semantically distinct from proven instrumental
+helper output.
+
+Versioned atomic local history and bounded diagnostic files survive console
+eviction/restart. History corruption/version/write errors are explicit; duplicate
+canonical path identities are rejected, not merged. Recent selection uses
+server-defined input compatibility while preserving manual paths.
+Text inspection never writes; bounded/truncated or binary/non-UTF-8 views cannot
+be edited. Explicit edits default to no-clobber Save As, which also refuses
+catalogued paths whose files are missing. Complete private temporary content is
+fsynced before publication. In-place replacement requires the inspected revision,
+preserves ordinary permissions and first durably publishes a private backup.
+History and text publication fsync their containing directories; subsequent
+failures retain and explicitly report the published filesystem outcome.
+Known consumers of older revisions are flagged without changing historical
+execution success.
+Derived copies do not invalidate their unchanged source.
+
+Configuration/receipt/diagnostic/IR text is read-only initially. Native desktop
+launching, prototype-manifest migration, remote discovery and history pruning
+are not implemented. Issue #8 retains transitive dependencies/settings
+invalidation/rerun planning; #9 retains audio UI execution; #10 retains Full
+Pipeline. See README's Issue #7 section for persistence and API contracts.
+
 ## Issue #6 implementation extension (October 16, 2026)
 
 The original inspection below remains historical evidence, not a claim of
@@ -82,8 +114,8 @@ retains byte counts/prefix/truncation state and prevents success/publication.
 EOF completeness and console truncation are independent.
 Output and diagnostic DOM rendering uses text, never HTML interpretation.
 
-Issue #7 retains responsibility for cross-session history, persistent artifact
-tracking, provenance and stale-state relationships. Issue #9 retains all
+The Issue #7 extension above supplies cross-session artifact history, provenance
+and direct consumed-revision warnings without a rerun model. Issue #9 retains all
 tool-specific audio UI execution, including playback and native/helper YuE2;
 those contracts remain distinct and unavailable here. Issue #10 retains
 full-pipeline coordination. Future MIDI generation remains unresolved.

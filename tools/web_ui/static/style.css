@@ -2,7 +2,7 @@
 body { margin: 0; }
 main { max-width: 52rem; margin: 2rem auto; padding: 0 1rem; }
 label { display: block; font-weight: 600; margin-top: 1rem; }
-input, select {
+input, select, textarea {
   box-sizing: border-box;
   font: inherit;
   padding: .6rem;
@@ -19,5 +19,6 @@ fieldset { border: 0; padding: 0; min-width: 0; }
 pre { white-space: pre-wrap; overflow: auto; max-height: 24rem; overflow-wrap: anywhere;
   border: 1px solid #888; padding: .75rem; }
 #execution-console { border-top: 1px solid #888; }
+textarea { font-family: monospace; }
 button:disabled { opacity: .6; }
 [hidden] { display: none !important; }

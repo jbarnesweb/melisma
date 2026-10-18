@@ -39,7 +39,14 @@ class Element {
   }
   trigger(event) {
     return Promise.all((this.listeners.get(event) || [])
-      .map(handler => handler({ currentTarget: this })));
+      .map(handler => {
+        const dispatched = { currentTarget: this };
+        try {
+          return handler(dispatched);
+        } finally {
+          dispatched.currentTarget = null;
+        }
+      }));
   }
   get options() { return this.children.filter(child => child.tagName === "option"); }
   get value() { return this._value; }
@@ -291,6 +298,11 @@ async function executionAssertions() {
   const replies = [];
   fetch = async (path, options) => {
     requests.push({ path, options });
+    if (path === "/api/artifacts") {
+      return { ok: true, async json() {
+        return { artifacts: [], consumers: [], history_path: "/fixture/history.json" };
+      } };
+    }
     const reply = replies.shift();
     if (reply instanceof Error) throw reply;
     assert(reply, `Unexpected fetch ${path}`);
@@ -419,6 +431,138 @@ async function executionAssertions() {
   assert(copied.length === before &&
     document.getElementById("run-status").textContent.includes("Copy failed"), "Copy failures visible");
   print("Execution console, trust-boundary, copy and polling assertions passed");
+  await artifactAssertions();
+}
+
+async function artifactAssertions() {
+  const entry = {
+    id: "b".repeat(32), path: "/fixture/lyrics.txt", type: "lyrics",
+    revision: "original-revision", exists: true, valid: true, production_status: "imported",
+  };
+  const history = {
+    artifacts: [entry], consumers: [{
+      id: "consumer", stage: "melisma.abc", success: true, stale: true, changed_inputs: [entry.id],
+    }],
+    import_types: ["midi", "lyrics", "text"], history_path: "/fixture/artifacts.json",
+  };
+  const markup = "<script>literal lyric text</script>";
+  let view = { artifact: entry, text: markup, editable: true, truncated: false, limit: 65536 };
+  fetch = async (path, options) => {
+    requests.push({ path, options });
+    let body;
+    if (path === "/api/artifacts") body = history;
+    else if (path === "/api/artifacts/compatible") body = { artifacts: [entry] };
+    else if (path.endsWith("/text")) body = view;
+    else if (path.endsWith("/save")) body = entry;
+    else throw new Error(`Unexpected artifact fetch: ${path}`);
+    return { ok: true, async json() { return body; } };
+  };
+  await refreshArtifacts();
+  assert(document.getElementById("recent-artifacts").options.length === 2,
+    "Recent history offers an explicit choice, not an automatically selected artifact");
+  assert(collect(document.getElementById("artifact-consumers"),
+    item => item.textContent?.includes("Historical success: true")).length,
+  "Stale input warning preserves historical execution success");
+  selector.value = "generate-abc";
+  render(definition.workflows.find(item => item.key === selector.value));
+  const find = collect(fields, item => item.textContent === "Find recent compatible artifacts")[1];
+  await find.trigger("click");
+  const lookup = JSON.parse(requests.at(-1).options.body);
+  assert(lookup.workflow === "generate-abc" && lookup.field === "lyrics",
+    "Compatibility choices are requested from the server for the actual field");
+  const recent = document.getElementById("lyrics-recent-artifact");
+  recent.value = entry.path;
+  previewId = "old-preview";
+  await recent.trigger("change");
+  assert(document.getElementById("lyrics").value === entry.path &&
+    values.get("generate-abc:lyrics:host") === entry.path,
+  "Recent artifact selection retains the existing explicit execution-path boundary");
+  assert(previewId === undefined, "Artifact selection invalidates Preview");
+  document.getElementById("lyrics").value = "/manual/lyrics.txt";
+  await document.getElementById("lyrics").trigger("input");
+  assert(values.get("generate-abc:lyrics:host") === "/manual/lyrics.txt",
+    "Manual absolute-path entry remains available");
+  document.getElementById("recent-artifacts").value = entry.id;
+  const beforeInspection = requests.length;
+  await inspectArtifact();
+  assert(requests.length === beforeInspection + 1 && !requests.at(-1).options.method,
+    "Inspection performs only a read request");
+  assert(document.getElementById("artifact-text").textContent === markup,
+    "Text artifacts render as literal text, never HTML");
+  assert(document.getElementById("artifact-editor").hidden, "Viewing is not editing");
+  const beforeEdit = requests.length;
+  beginArtifactEdit();
+  assert(requests.length === beforeEdit, "Opening the explicit editor never writes");
+  assert(!document.getElementById("artifact-replace").checked &&
+    document.getElementById("artifact-save-path").value === "",
+  "Save As to a new destination is the default");
+  document.getElementById("artifact-edit-text").value = "edited lyrics";
+  document.getElementById("artifact-save-path").value = "/fixture/derived-lyrics.txt";
+  await saveArtifact();
+  const saveRequest = requests.findLast(item => item.path.endsWith("/save"));
+  const saved = JSON.parse(saveRequest.options.body);
+  assert(saved.replace === false && saved.revision === entry.revision &&
+    saved.destination === "/fixture/derived-lyrics.txt" && saved.text === "edited lyrics",
+  "Save sends an explicit new path, original revision, complete draft and no replacement");
+  view = { ...view, editable: false, truncated: true };
+  await inspectArtifact();
+  assert(document.getElementById("edit-artifact").disabled,
+    "Truncated inspection disables editing");
+  const beforeTruncatedSave = requests.length;
+  beginArtifactEdit();
+  await saveArtifact();
+  assert(requests.length === beforeTruncatedSave, "Truncated buffers are never submitted for saving");
+  assert(document.getElementById("artifact-text-status").textContent.includes("TRUNCATED"),
+    "Truncation is explicit");
+  const registration = document.getElementById("register-artifact");
+  const registrationType = document.getElementById("artifact-import-type");
+  document.getElementById("artifact-import-path").value = entry.path;
+  registrationType.value = "lyrics";
+  let selectedType = "lyrics";
+  for (const outcome of [
+    "success", "success", "validation failure", "success", "text success",
+    "transport failure", "history failure",
+  ]) {
+    if (outcome === "text success") {
+      selectedType = "text";
+      registrationType.value = selectedType;
+    }
+    document.getElementById("artifact-import-path").value =
+      outcome === "validation failure" ? "/fixture/missing-lyrics.txt" : entry.path;
+    let finish;
+    let fail;
+    fetch = (path, options) => {
+      requests.push({ path, options });
+      if (path === "/api/artifacts/register") {
+        assert(JSON.parse(options.body).type === selectedType,
+          `${outcome}: registration submits the user's selected type`);
+        return new Promise((resolve, reject) => { finish = resolve; fail = reject; });
+      }
+      assert(path === "/api/artifacts", "Registration refresh reads only artifact history");
+      if (outcome === "history failure") return Promise.reject(new Error("history unavailable"));
+      return Promise.resolve({ ok: true, async json() { return history; } });
+    };
+    const pending = registration.trigger("click");
+    assert(registration.disabled, `${outcome}: registration stays disabled while awaiting network`);
+    // trigger() already cleared currentTarget, just as DOM dispatch does.
+    if (outcome === "transport failure") {
+      fail(new Error("network unavailable"));
+    } else {
+      finish({
+        ok: outcome !== "validation failure", status: outcome === "validation failure" ? 422 : 200,
+        async json() { return outcome === "validation failure" ? { error: "input rejected" } : entry; },
+      });
+    }
+    await pending;
+    assert(!registration.disabled, `${outcome}: registration button recovers after dispatch has ended`);
+    assert(registrationType.value === selectedType,
+      `${outcome}: registration preserves the user's ${selectedType} selection`);
+    if (outcome !== "success" && outcome !== "text success") {
+      assert(document.getElementById("artifact-status").textContent.includes("failed"),
+        `${outcome}: failure remains visible after controls recover`);
+    }
+  }
+  print("Artifact compatibility, inspection, explicit editing and stale-warning assertions passed");
 }
 const loop = new imports.gi.GLib.MainLoop(null, false);
 let executionFailure;

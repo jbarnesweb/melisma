@@ -220,7 +220,9 @@ Issue #5 provides dependency-free workflow forms, capability-state display,
 explicit read-only refresh, and an **unsaved** tool-configuration editor in
 `tools/web_ui/`. Issue #6 extends these projections with command preview,
 current-session execution and diagnostics for **Generate ABC / Generate USTX
-only**, without claiming resource/runtime readiness.
+only**, without claiming resource/runtime readiness. Issue #7 adds durable local
+artifact history, explicit source provenance, recent-input selection, and safe
+text inspection/editing without enabling audio or Full Pipeline execution.
 From the repository root, start it with:
 
 ```sh
@@ -239,8 +241,10 @@ host override. Fixed GET/HEAD routes are `/`, `/style.css`, `/app.js`,
 same-origin request token). POST routes additionally include the guarded
 operation preview, run submission and targeted Stop described below.
 PUT/PATCH/DELETE and other POST routes are rejected. Directory listings,
-uploads, arbitrary file serving, artifact browsing and configuration
+uploads, arbitrary file serving and configuration
 mutation/persistence endpoints are not exposed.
+Registered-artifact metadata and bounded text inspection are available through
+the Issue #7 routes below; there is no general filesystem browser.
 This is a local development UI, not a production server.
 
 All eight workflows remain visible. Generate ABC and Generate USTX have
@@ -296,8 +300,9 @@ finally:
     server.server_close()
 ```
 
-Startup serializes the supplied document without discovery or filesystem scans.
-Ordinary GET/HEAD requests serve snapshots. The CLI/default server supplies no
+Startup serializes the supplied workflow document and loads the artifact-history
+index without discovery or directory scans. Workflow GET/HEAD requests serve
+snapshots. The CLI/default server supplies no
 reports or configuration and cannot execute until explicitly configured.
 To refresh, explicitly click
 **Refresh configured capabilities (read-only)**. With no configured sources,
@@ -416,10 +421,10 @@ instrumental contracts remain separate future integrations owned by Issue #9.
 The experimental pipeline is not executed by this UI (Issue #10).
 
 ABC output is modeled as an inspectable `abc` artifact tied to the output-path
-field, compatible with orchestration's `ExpectedArtifact` record. Raw-text
-inspection and a rendered musical-score view have explicit future/unavailable
-metadata. Neither browsing view reads an artifact here; current-run artifact
-validation and diagnostics are reported separately. Score rendering has
+field, compatible with orchestration's `ExpectedArtifact` record. Registered
+ABC text can be inspected in Recent artifacts. A rendered musical-score view
+remains explicitly unavailable. Current-run artifact validation and diagnostics
+are reported separately. Score rendering has
 no implementation, executable action, or rendering dependency.
 
 There are no configuration writes, remote runtime contacts, model loading,
@@ -526,8 +531,115 @@ finalization. Complete machine text is transiently loaded into memory; output
 size is subject to resources/filesystem capacity, not console retention.
 Playback's diagnostic-only `OwnedChild` capture remains prefix-only.
 Thread-safe snapshots retain captured console text after exit.
-Records disappear on server restart; no database, cross-session history,
-artifact graph or provenance browser is implemented (Issue #7).
+Live console records disappear on server restart. Issue #7's separate artifact
+index, consumed-input revisions and bounded diagnostic files persist; it adds
+no execution graph or rerun planner.
+
+#### Artifact history, inspection and explicit editing (Issue #7)
+
+The server stores a version-1 local artifact index at
+`$XDG_STATE_HOME/melisma/artifacts.json`, or
+`~/.local/state/melisma/artifacts.json` when `XDG_STATE_HOME` is unset.
+Override it with `--artifact-history /absolute/path/history.json`, or
+`create_server(..., artifact_history=Path(...))`. The index is independent of
+the 32-run registry. Generated media stays at its original location; history
+never deletes it. History updates use a server-local lock, a private temporary
+file, file fsync, atomic replacement and containing-directory fsync.
+Corruption/unsupported versions fail startup explicitly rather than resetting
+history; write failures are surfaced
+in API errors or the run's `catalog_error`, preserving tool results. Use one
+server per history file; cross-process coordination is not implemented.
+
+`ArtifactCatalog` wraps the existing `ExpectedArtifact`/`ArtifactRecord`
+validation boundary. Entries have an opaque stable ID, canonical path,
+semantic type, validation profile/observation, content-hash revision, session,
+origin, producing tool/operation/run, and role-qualified input references.
+Each canonical path has one catalog identity. Duplicate canonical paths in
+persisted history fail explicitly rather than silently selecting or merging IDs.
+`Operation.inputs` carries those references explicitly; no code parses argv
+to infer provenance. Preview reads/fingerprints inputs without registering them.
+Start rechecks revisions and registers consumed inputs. A changed input requires
+a fresh preview. Synchronous clients can use `catalog.bind_inputs(operation)`,
+`catalog.begin(operation)`, execute through the existing adapter, then
+`catalog.register_result(result, run_id)` and `catalog.end(operation)` in
+`finally`. The web registry handles that lifecycle automatically.
+
+File validity is separate from production status: a valid partial file does
+not make its failed run successful. Failed/invalid/missing outputs remain
+diagnostic records; a pre-execution rejection never claims the occupied output.
+Only imported, successful or explicitly edited, existing, non-invalid artifacts
+appear as compatible input candidates. Native YuE2 song audio is `yue2-audio`,
+not `instrumental-audio`; only the instrumental adapter's production contract
+establishes that generated role. Manually imported audio stays generic `audio`.
+Type compatibility, readable MIDI, structural Melisma ABC/USTX checks and
+historical audio-probe results do not establish present resource readiness.
+
+Recent artifacts can be registered by explicit absolute path, refreshed,
+inspected, or selected beside the existing manual MIDI/lyric path controls.
+Compatibility is defined by the server. File-picker names never become host
+paths. Audio/pipeline workflows remain disabled. Open text is in-app; Copy
+artifact path supports local Open/Reveal without a native launcher or arbitrary
+file-serving endpoint.
+
+Text inspection supports ABC, USTX, lyrics, JSON/configuration, JSON Lines IR
+and diagnostic text. GET inspection never writes the artifact or index. It
+reads at most 64 KiB for display, reports truncation, rejects invalid UTF-8/NUL
+binary text, and never enables editing of truncated buffers. ABC, USTX, lyrics
+and plain text have an explicit Edit action; configuration, IR, receipts and
+diagnostics remain read-only. The editor defaults to Save As to a new absolute
+path, refusing existing files, symlinks and already catalogued destinations,
+even when their backing file is missing. Save As prepares and fsyncs private
+temporary content, then publishes it using a no-clobber hard link.
+Explicit replacement requires a matching content revision, a regular original
+file, and an exclusively created
+private `0600` backup (whose path is recorded), durably published before atomic
+replacement. Replacement preserves ordinary `rwx` permission bits, not
+ownership or special permission bits. Containing directories are fsynced after
+backup, Save As and replacement publication. Failures after publication retain
+the published file and report the actual outcome, including unconfirmed
+durability or failed history persistence; they do not imply rollback.
+Files used by active runs cannot be edited. Checks coordinate this server, not external
+editors; concurrent external file access is not a filesystem sandbox.
+
+Known consumers retain the exact artifact ID/revision they used and their
+historical success. In-place edits, or external changes observed on Refresh,
+show a direct-consumer stale-input warning. A separately saved derived copy
+does not stale consumers of its unchanged source. There is no transitive stale
+propagation, settings invalidation, automatic rerun, scheduling or reuse plan
+(Issue #8). Audio execution remains Issue #9 and Full Pipeline remains #10.
+
+Each finalized web run also writes a private diagnostic JSON file alongside
+the history index, under `HISTORY_STEM-files/SESSION_ID/RUN_ID.json`. It records
+the existing bounded console/result snapshot, including truncation and capture
+flags, not deleted complete process spools. Environment overrides are omitted.
+History/diagnostic retention is currently manual; index growth is not bounded
+by console eviction. No remote artifact discovery or prototype-manifest
+migration is performed.
+
+| Route | Contract |
+| --- | --- |
+| `GET /api/artifacts` | Persisted metadata, last observations, known consumers and import types |
+| `POST /api/artifacts/register` | `{path, type}`; existing explicit absolute local file |
+| `POST /api/artifacts/refresh` | `{}`; recheck tracked files, no recursive scan |
+| `POST /api/artifacts/compatible` | `{workflow, field}`; server-defined compatible input candidates |
+| `GET /api/artifacts/ID/text` | Bounded, literal UTF-8 inspection and revision |
+| `POST /api/artifacts/ID/save` | `{revision, text, destination, replace}`; explicit complete text save |
+
+Writes reuse the existing Host/origin/CSRF/framing checks. Unknown IDs return
+404, invalid saves 422, and history write failures 500. Artifact saves accept
+up to 512 KiB of JSON framing so escaped 64-KiB UTF-8 drafts fit; stored text
+still has the 64-KiB limit. Inputs and outputs remain deliberate local operator
+access, not remote/untrusted filesystem access.
+
+Run the focused artifact tests with:
+
+```sh
+python3 -B -m unittest discover -s tests -p test_artifacts.py -v
+python3 -B -m unittest discover -s tests -p test_web_execution.py -v
+python3 -B -m unittest discover -s tests -p test_web_ui.py -v
+```
+
+#### Process stop and capture behavior (Issue #6)
 
 Stop records intent, sends termination to the exact owned child, waits up to
 one second in the web API, then escalates to forced kill and waits/reaps.

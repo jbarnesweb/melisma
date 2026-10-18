@@ -59,6 +59,14 @@ def dependency_reports():
 
 class OfflineTests(unittest.TestCase):
     def setUp(self):
+        self.artifact_temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.artifact_temp.cleanup)
+        history = mock.patch(
+            "tools.web_ui.server.default_history_path",
+            return_value=Path(self.artifact_temp.name) / "history.json",
+        )
+        history.start()
+        self.addCleanup(history.stop)
         for target in (
             "subprocess.run", "subprocess.Popen",
             "tools.orchestration.discovery.DiscoveryService.__init__",
@@ -410,7 +418,7 @@ class WorkflowTests(OfflineTests):
                 self.assertEqual(item.outputs, ())
                 self.assertIsNone(item.operation)
 
-    def test_abc_artifact_has_future_inspection_views_not_actions(self):
+    def test_abc_artifact_has_text_inspection_but_no_score_rendering(self):
         output, = self.workflows["generate-abc"].outputs
         self.assertEqual(output.field, "abc_output")
         self.assertEqual(output.kind, "abc")
@@ -420,9 +428,8 @@ class WorkflowTests(OfflineTests):
             ExpectedArtifact(Path("not-created.abc"), "abc"),
         )
         self.assertEqual([view.key for view in output.views], ["raw-text", "score"])
-        self.assertTrue(all(
-            view.state == State.UNAVAILABLE and view.reason for view in output.views
-        ))
+        self.assertEqual(output.views[0].state, State.SUPPORTED)
+        self.assertEqual(output.views[1].state, State.UNAVAILABLE)
         self.assertIn("no rendering dependency", output.views[1].reason)
 
     def test_definitions_do_not_supply_executable_commands(self):
@@ -813,7 +820,7 @@ class ServerTests(OfflineTests):
     def test_arbitrary_paths_and_execution_routes_not_served(self):
         for path in (
             "/README.md", "/../README.md", "/%2e%2e/README.md",
-            "/static/", "/api/run", "/api/configuration", "/api/artifacts",
+            "/static/", "/api/run", "/api/configuration",
             "/api/workflows?path=/etc/passwd",
             "/api/files", "/api/browse", "/api/upload", "/api/configuration/save",
             "/api/execute",
@@ -1077,7 +1084,9 @@ class ReadOnlyRefreshTests(unittest.TestCase):
                     DiscoveryService, "refresh", autospec=True, side_effect=original_refresh,
                 ) as refreshed,
             ):
-                server = create_server(0, configuration=config)
+                server = create_server(
+                    0, configuration=config, artifact_history=root / "history.json",
+                )
                 try:
                     refreshed.assert_not_called()
                     document = server.refresh()

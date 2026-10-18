@@ -1,6 +1,7 @@
 """Local, internal tool adapters; no server or command-execution endpoint."""
 
 from .adapters import FFmpegAdapter, MelismaAdapter, OpenUtauAdapter
+from .artifact_catalog import ArtifactCatalog, CatalogError
 from .capabilities import (
     Capability, DiscoveryReport, Provenance, Readiness, SourceIdentity, SourceKind,
     State, Verification, resolve_default, revalidate_selection,
@@ -20,8 +21,10 @@ from .yue2 import InstrumentalAdapter, NativeYuE2Adapter
 
 __all__ = [
     "AsyncAPI",
+    "ArtifactCatalog",
     "AuthReference",
     "Capability",
+    "CatalogError",
     "Configuration",
     "ConfigurationError",
     "ConfigurationIssue",
