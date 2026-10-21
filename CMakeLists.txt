@@ -69,6 +69,66 @@ if(BUILD_TESTING)
 	set_tests_properties(web_ui PROPERTIES
 		WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 	)
+	add_test(NAME workflow_dependencies
+		COMMAND ${Python3_EXECUTABLE} -B -m unittest
+			discover
+			-s ${CMAKE_CURRENT_SOURCE_DIR}/tests
+			-p test_workflow_dependencies.py
+			-v
+	)
+	set_tests_properties(workflow_dependencies PROPERTIES
+		WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+	)
+	add_test(NAME stage_artifact_state
+		COMMAND ${Python3_EXECUTABLE} -B -m unittest
+			discover
+			-s ${CMAKE_CURRENT_SOURCE_DIR}/tests
+			-p test_stage_artifact_state.py
+			-v
+	)
+	set_tests_properties(stage_artifact_state PROPERTIES
+		WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+	)
+	add_test(NAME production_provenance
+		COMMAND ${Python3_EXECUTABLE} -B -m unittest
+			discover
+			-s ${CMAKE_CURRENT_SOURCE_DIR}/tests
+			-p test_production_provenance.py
+			-v
+	)
+	set_tests_properties(production_provenance PROPERTIES
+		WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+	)
+	add_test(NAME stale_propagation
+		COMMAND ${Python3_EXECUTABLE} -B -m unittest
+			discover
+			-s ${CMAKE_CURRENT_SOURCE_DIR}/tests
+			-p test_stale_propagation.py
+			-v
+	)
+	set_tests_properties(stale_propagation PROPERTIES
+		WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+	)
+	add_test(NAME readiness
+		COMMAND ${Python3_EXECUTABLE} -B -m unittest
+			discover
+			-s ${CMAKE_CURRENT_SOURCE_DIR}/tests
+			-p test_readiness.py
+			-v
+	)
+	set_tests_properties(readiness PROPERTIES
+		WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+	)
+	add_test(NAME reruns
+		COMMAND ${Python3_EXECUTABLE} -B -m unittest
+			discover
+			-s ${CMAKE_CURRENT_SOURCE_DIR}/tests
+			-p test_reruns.py
+			-v
+	)
+	set_tests_properties(reruns PROPERTIES
+		WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+	)
 	add_test(NAME execution
 		COMMAND ${Python3_EXECUTABLE} -B -m unittest
 			discover

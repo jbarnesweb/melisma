@@ -12,6 +12,7 @@ from .artifacts import absolute, existing_input, inspect_artifact, new_output, r
 from .process import (
     ArtifactRecord, ExpectedArtifact, Operation, OperationInput, OperationResult, ProcessRunner,
 )
+from .provenance import ProductionConfiguration
 
 
 NATIVE_FILES = (
@@ -135,6 +136,8 @@ def validate_identity(run_id: str, seed: int) -> None:
 class NativeYuE2Adapter(ToolAdapter):
     tool = "yue2-native"
     operations = ("generate",)
+    required_inputs = {"generate": ()}
+    manifest_operations = ("generate",)
     contract_version = "0.1.6"
 
     def build(
@@ -172,6 +175,14 @@ class NativeYuE2Adapter(ToolAdapter):
                       ("result_root", str(root)), ("stage", "audio")),
             environment=(("PYTHONPATH", str(self.cwd / "src")), ("PYTHONHOME", None)),
             inputs=inputs,
+            production=ProductionConfiguration(self.contract_version, (
+                ("style", style),
+                ("lyrics_revision", hashlib.sha256(lyrics.encode("utf-8")).hexdigest()),
+                ("seed", seed), ("cot", cot),
+                ("model", str(absolute(model, self.cwd))),
+                ("vae", str(absolute(vae, self.cwd))), ("device", device),
+                ("offline", True), ("stage", "audio"),
+            )),
         )
 
     def complete(self, result: OperationResult, runner: ProcessRunner) -> OperationResult:
@@ -182,6 +193,12 @@ class NativeYuE2Adapter(ToolAdapter):
 class InstrumentalAdapter(ToolAdapter):
     tool = "yue2-instrumental"
     operations = ("prepare", "generate", "verify")
+    required_inputs = {
+        "prepare": (("abc", "abc"),),
+        "generate": (("prepared-manifest", "configuration"),),
+        "verify": (("delivery-manifest", "configuration"),),
+    }
+    manifest_operations = ("prepare", "generate")
     contract_version = "0.1.5"
 
     @property
@@ -192,13 +209,14 @@ class InstrumentalAdapter(ToolAdapter):
         self, name: str, arguments: tuple[str, ...],
         expected: tuple[ExpectedArtifact, ...], root: Path,
         *, inputs: tuple[OperationInput, ...] = (),
+        production: ProductionConfiguration | None = None,
     ) -> Operation:
         return self._operation(
             name, ("-B", str(self.script), *arguments), expected,
             metadata=(("contract_version", self.contract_version), ("result_root", str(root))),
             # Never inject the current 0.1.6 source into the pinned interpreter.
             environment=(("PYTHONPATH", None), ("PYTHONHOME", None)),
-            inputs=inputs,
+            inputs=inputs, production=production,
         )
 
     def prepare(
@@ -217,6 +235,10 @@ class InstrumentalAdapter(ToolAdapter):
             (ExpectedArtifact(output / "prepared" / "prepared-manifest.json", "json"),),
             output,
             inputs=(OperationInput("abc", abc, "abc"),),
+            production=ProductionConfiguration(self.contract_version, (
+                ("style", style), ("seed", seed), ("composer", "agent"),
+                ("empty_lyrics", True), ("offline", True),
+            )),
         )
 
     def generate(
@@ -240,6 +262,10 @@ class InstrumentalAdapter(ToolAdapter):
             inputs=(OperationInput(
                 "prepared-manifest", prepared / "prepared-manifest.json", "configuration",
             ),),
+            production=ProductionConfiguration(self.contract_version, (
+                ("models_root", str(absolute(models_root, self.cwd))),
+                ("device", device), ("offline", True),
+            )),
         )
 
     def verify(self, directory: Path) -> Operation:
@@ -280,6 +306,15 @@ class InstrumentalAdapter(ToolAdapter):
             return replace(result, completion=metadata)
         except (ValueError, TypeError) as error:
             return replace(result, errors=(*result.errors, str(error)))
+
+
+def has_manifest_completion(stage: str | None) -> bool:
+    """These completion methods validate all manifest entries, not just required files."""
+    return any(
+        stage == f"{adapter.tool}.{operation}"
+        for adapter in (NativeYuE2Adapter, InstrumentalAdapter)
+        for operation in adapter.manifest_operations
+    )
 
 
 def read_verification(stdout: str) -> dict[str, object]:

@@ -18,6 +18,10 @@ from .process import (
     ArtifactRecord, ExpectedArtifact, Operation, OperationInput, OperationResult,
     ProcessState, utc_now,
 )
+from .provenance import (
+    ProductionProvenance, production_provenance, provenance_from_document,
+    same_production_context,
+)
 
 
 SCHEMA_VERSION = 1
@@ -142,6 +146,31 @@ class CatalogEntry:
     derived_from: str | None = None
     backup_path: str | None = None
     edited_at: str | None = None
+    provenance: ProductionProvenance | None = None
+
+
+@dataclass(frozen=True)
+class ArtifactProduction:
+    artifact_id: str
+    provenance: ProductionProvenance
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.artifact_id, str)
+            or re.fullmatch(r"[0-9a-f]{32}", self.artifact_id) is None
+            or not isinstance(self.provenance, ProductionProvenance)
+            or self.provenance.output_revision is None
+        ):
+            raise ValueError("invalid historical artifact production")
+
+    @classmethod
+    def from_document(cls, value: object) -> ArtifactProduction:
+        if not isinstance(value, dict) or set(value) != {"artifact_id", "provenance"}:
+            raise ValueError("invalid historical artifact production document")
+        evidence = provenance_from_document(value["provenance"])
+        if evidence is None:
+            raise ValueError("historical artifact production requires evidence")
+        return cls(value["artifact_id"], evidence)
 
 
 @dataclass(frozen=True)
@@ -151,6 +180,7 @@ class ConsumedRun:
     stage: str
     success: bool
     sources: tuple[ArtifactSource, ...]
+    productions: tuple[ArtifactProduction, ...] = ()
 
 
 def unique_paths(entries: dict[str, CatalogEntry]) -> dict[Path, CatalogEntry]:
@@ -167,12 +197,18 @@ def unique_paths(entries: dict[str, CatalogEntry]) -> dict[Path, CatalogEntry]:
 
 
 def semantic_type(operation: Operation, artifact: ArtifactRecord) -> str:
-    kind, path = artifact.expected.kind, artifact.expected.path
+    return semantic_output_type(operation.stage, artifact.expected)
+
+
+def semantic_output_type(stage: str, artifact: ExpectedArtifact) -> str:
+    """Classify a declared output without inspecting its contents or existence."""
+    kind, path = artifact.kind, artifact.path
     if kind == "audio" or path.suffix.lower() in (".wav", ".flac", ".mp3", ".ogg"):
         return {
-            "openutau": "vocal-audio", "ffmpeg": "mixed-audio",
-            "yue2-native": "yue2-audio", "yue2-instrumental": "instrumental-audio",
-        }.get(operation.tool, "audio")
+            "openutau.render": "vocal-audio", "ffmpeg.mix": "mixed-audio",
+            "yue2-native.generate": "yue2-audio",
+            "yue2-instrumental.generate": "instrumental-audio",
+        }.get(stage, "audio")
     if kind in ("abc", "ustx", "ir"):
         return kind
     if path.name == "lyrics.txt":
@@ -183,6 +219,16 @@ def semantic_type(operation: Operation, artifact: ArtifactRecord) -> str:
         ".abc": "abc", ".ustx": "ustx", ".json": "configuration",
         ".jsonl": "ir", ".txt": "text",
     }.get(path.suffix.lower(), "file")
+
+
+def compatible_artifact_type(entry: CatalogEntry, accepted_types: tuple[str, ...]) -> bool:
+    """Semantic selection eligibility only, without observing or changing files."""
+    return entry.type in accepted_types and (
+        entry.type != "instrumental-audio"
+        or entry.stage is not None and semantic_output_type(
+            entry.stage, ExpectedArtifact(Path(entry.path), entry.kind),
+        ) == entry.type
+    )
 
 
 class ArtifactCatalog:
@@ -219,6 +265,7 @@ class ArtifactCatalog:
             for item in data["artifacts"]:
                 entry = CatalogEntry(**{
                     **item, "sources": tuple(ArtifactSource(**source) for source in item["sources"]),
+                    "provenance": provenance_from_document(item.get("provenance")),
                 })
                 if (
                     entry.type not in ARTIFACT_TYPES or not Path(entry.path).is_absolute()
@@ -242,6 +289,13 @@ class ArtifactCatalog:
                         entry.backup_path, entry.edited_at,
                     ))
                     or not all(valid_source(source) for source in entry.sources)
+                    or entry.provenance is not None and (
+                        entry.origin == "imported" or entry.producer_run is None
+                        or entry.provenance.stage != entry.stage
+                        or entry.provenance.output_type != entry.type
+                        or entry.provenance.output_revision is None
+                        or entry.production_status not in ("successful", "edited")
+                    )
                 ):
                     raise ValueError("invalid artifact record")
                 self.entries[entry.id] = entry
@@ -249,6 +303,10 @@ class ArtifactCatalog:
             for item in data["runs"]:
                 run = ConsumedRun(**{
                     **item, "sources": tuple(ArtifactSource(**source) for source in item["sources"]),
+                    "productions": tuple(
+                        ArtifactProduction.from_document(production)
+                        for production in item.get("productions", [])
+                    ),
                 })
                 if (
                     run.id in self.runs or type(run.success) is not bool
@@ -256,6 +314,11 @@ class ArtifactCatalog:
                         run.id, run.session_id, run.stage,
                     ))
                     or not all(valid_source(source) for source in run.sources)
+                    or any(
+                        not run.success or production.artifact_id not in self.entries
+                        or production.provenance.stage != run.stage
+                        for production in run.productions
+                    )
                 ):
                     raise ValueError("invalid consumer record")
                 self.runs[run.id] = run
@@ -317,6 +380,11 @@ class ArtifactCatalog:
     def get(self, artifact_id: str) -> CatalogEntry:
         with self.lock:
             return self.entries[artifact_id]
+
+    def stage_artifacts(self, stage: str) -> tuple[CatalogEntry, ...]:
+        """All tracked outputs for a producer stage, including partial/missing ones."""
+        with self.lock:
+            return tuple(entry for entry in self.entries.values() if entry.stage == stage)
 
     def _entry(
         self, path: Path, type_: str, *, kind: str = "file", allow_empty: bool = False,
@@ -411,12 +479,13 @@ class ArtifactCatalog:
             entries = dict(self.entries)
             run = ConsumedRun(
                 run_id, self.session_id,
-                f"{result.operation.tool}.{result.operation.name}", result.success, sources,
+                result.operation.stage, result.success, sources,
             )
             # A pre-execution rejection may inspect someone else's existing output.
             produced = result.process.state not in (
                 ProcessState.REJECTED, ProcessState.START_FAILED, ProcessState.CANCELLED,
             ) and result.process.pid is not None and result.process.publication_error is None
+            productions = []
             if produced:
                 records: dict[Path, ArtifactRecord] = {}
                 for record in result.artifacts:
@@ -447,8 +516,18 @@ class ArtifactCatalog:
                         id=previous.id if previous else entry.id,
                         created_at=previous.created_at if previous else entry.created_at,
                     )
+                    if result.success and entry.revision is not None:
+                        evidence = production_provenance(result.operation, entry.type)
+                        if evidence is not None:
+                            historical = replace(
+                                evidence, output_revision=entry.revision,
+                            )
+                            entry = replace(entry, provenance=historical)
+                            productions.append(ArtifactProduction(entry.id, historical))
                     entries[entry.id] = entry
-            self._commit(entries, {**self.runs, run.id: run})
+            self._commit(entries, {
+                **self.runs, run.id: replace(run, productions=tuple(productions)),
+            })
 
     def register_diagnostics(self, run_id: str, document: dict[str, object]) -> None:
         if self.path is None:
@@ -526,7 +605,8 @@ class ArtifactCatalog:
         with self.lock:
             return [
                 asdict(entry) for entry in reversed(tuple(self.entries.values()))
-                if entry.type in accepted_types and entry.exists and entry.valid is not False
+                if compatible_artifact_type(entry, accepted_types)
+                and entry.exists and entry.valid is not False
                 and entry.production_status in ("imported", "successful", "edited")
                 and Path(entry.path) not in self.active_paths
             ]

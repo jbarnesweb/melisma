@@ -83,6 +83,7 @@ class Playback:
 class FFplayAdapter(ToolAdapter):
     tool = "ffplay"
     operations = ("play",)
+    required_inputs = {"play": (("audio", "audio"),)}
 
     def build(self, input_path: Path) -> Operation:
         input_path = existing_input(input_path, self.cwd)

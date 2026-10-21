@@ -84,6 +84,27 @@ class OutputDefinition:
 
 
 @dataclass(frozen=True)
+class StageDependency:
+    """Possible dataflow through one input, not a requirement to run a producer.
+
+    Imported artifacts need no producer run. An edge applies only when this
+    upstream stage supplies this input with the specified semantic artifact type.
+    """
+
+    upstream: str
+    input: str
+    artifact_type: str
+
+
+@dataclass(frozen=True)
+class WorkflowProduction:
+    """Owned producer identity and closed outputs; manifest contracts are separate."""
+
+    stage: str
+    artifact_types: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class WorkflowDefinition:
     key: str
     label: str
@@ -99,6 +120,18 @@ class WorkflowDefinition:
         "Workflow runtime readiness is not evaluated by this UI. "
         "Individual capability records are separate evidence, not workflow validation."
     )
+    stage_dependencies: tuple[StageDependency, ...] = ()
+    productions: tuple[WorkflowProduction, ...] = ()
+
+    def owns_production(self, stage: str | None) -> bool:
+        return any(item.stage == stage for item in self.productions)
+
+    def accepts_production(self, stage: str | None, artifact_type: str) -> bool:
+        """Match closed outputs; manifest outputs require their completion contract."""
+        return any(
+            item.stage == stage and artifact_type in item.artifact_types
+            for item in self.productions
+        )
 
 
 WORKFLOW_TOOLS = {
@@ -264,6 +297,10 @@ def workflow_definitions(
                 ) if kind == "abc" else (),
             ),),
             operation=kind,
+            productions=(
+                WorkflowProduction(f"{MelismaAdapter.tool}.{kind}", (kind,)),
+                WorkflowProduction(f"{MelismaAdapter.tool}.render-inputs", (kind, "ir")),
+            ),
         )
         for kind in ("abc", "ustx")
     )
@@ -278,22 +315,41 @@ def workflow_definitions(
             "render-vocals", "Render Vocals", State.UNAVAILABLE, False,
             "Issue #9: requires OpenUtau audio workflow integration and resource "
             "validation; the adapter alone does not establish runtime readiness.",
+            stage_dependencies=(StageDependency("generate-ustx", "ustx", "ustx"),),
+            productions=(WorkflowProduction("openutau.render", ("vocal-audio",)),),
         ),
         WorkflowDefinition(
             "generate-yue2-audio", "Generate YuE2 Audio", State.UNAVAILABLE, False,
             "Requires separate native song and pinned instrumental target/"
             "contract selection, readiness validation, and job execution "
             "integration; this slice implements none of these.",
+            stage_dependencies=(StageDependency("generate-abc", "abc", "abc"),),
+            productions=(
+                WorkflowProduction("yue2-native.generate"),
+                WorkflowProduction("yue2-instrumental.prepare"),
+                WorkflowProduction("yue2-instrumental.generate"),
+            ),
         ),
         WorkflowDefinition(
             "mix-audio", "Mix Audio", State.UNAVAILABLE, False,
             "Issue #9: requires FFmpeg audio workflow integration and audio input/"
             "output validation; execution is not enabled here.",
+            stage_dependencies=(
+                StageDependency("render-vocals", "vocal", "vocal-audio"),
+                StageDependency("generate-yue2-audio", "instrumental", "instrumental-audio"),
+            ),
+            productions=(WorkflowProduction("ffmpeg.mix", ("mixed-audio",)),),
         ),
         WorkflowDefinition(
             "play-audio", "Play Audio", State.UNAVAILABLE, False,
             "Issue #9: requires UI integration with the FFplay adapter's owned playback "
             "lifecycle and audio validation.",
+            stage_dependencies=(
+                StageDependency("render-vocals", "audio", "vocal-audio"),
+                StageDependency("generate-yue2-audio", "audio", "yue2-audio"),
+                StageDependency("generate-yue2-audio", "audio", "instrumental-audio"),
+                StageDependency("mix-audio", "audio", "mixed-audio"),
+            ),
         ),
         WorkflowDefinition(
             "full-pipeline", "Full Pipeline", State.UNAVAILABLE, False,
@@ -312,6 +368,45 @@ def workflow_definitions(
         )
         for workflow in workflows
     )
+
+
+def stage_dependencies(stage: str) -> tuple[StageDependency, ...]:
+    """Return artifact-qualified direct edges from the workflow source of truth."""
+    for workflow in workflow_definitions():
+        if workflow.key == stage:
+            return workflow.stage_dependencies
+    raise ValueError(f"Unknown workflow stage: {stage}")
+
+
+def direct_upstream(stage: str) -> tuple[str, ...]:
+    """Possible direct producers, deduplicated and sorted, not execution order."""
+    return tuple(sorted({edge.upstream for edge in stage_dependencies(stage)}))
+
+
+def direct_downstream(stage: str) -> tuple[str, ...]:
+    """Possible direct consumers; input/artifact selection still qualifies edges."""
+    stage_dependencies(stage)
+    return tuple(sorted(
+        workflow.key for workflow in workflow_definitions()
+        if any(edge.upstream == stage for edge in workflow.stage_dependencies)
+    ))
+
+
+def transitive_downstream(stage: str) -> tuple[str, ...]:
+    """Reachable possible consumers, once each; no state or execution changes."""
+    stage_dependencies(stage)
+    downstream: dict[str, set[str]] = {}
+    for workflow in workflow_definitions():
+        for edge in workflow.stage_dependencies:
+            downstream.setdefault(edge.upstream, set()).add(workflow.key)
+    reached: set[str] = set()
+    pending = list(downstream.get(stage, ()))
+    while pending:
+        current = pending.pop()
+        if current not in reached:
+            reached.add(current)
+            pending.extend(downstream.get(current, ()))
+    return tuple(sorted(reached))
 
 
 def workflow_document(

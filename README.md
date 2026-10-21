@@ -77,9 +77,497 @@ FFplay additionally exposes `start(operation, runner)` for an owned playback
 child with `poll()`, `wait()`, and bounded `stop()`. Use it as a context manager
 to stop/reap the exact child on exit. Cancellation is not exposed for the
 generation tools, whose graceful cancellation contracts are unverified.
-There is no public command endpoint or pipeline graph in this adapter package.
+There is no public command endpoint or pipeline scheduler in this adapter package.
 The local UI below invokes only explicitly configured Melisma ABC/USTX
 operations; audio integrations and full-pipeline execution remain deferred.
+
+#### Stage dependencies
+
+`tools.web_ui.workflows.WorkflowDefinition.stage_dependencies` is the source of
+truth for dependencies between the existing workflows. Each `StageDependency`
+identifies an upstream workflow, the consuming input role, and the semantic
+artifact type established by the artifact catalog:
+
+```text
+generate-ustx --ustx--> render-vocals --vocal-audio---------> mix-audio
+generate-abc  --abc---> generate-yue2-audio --instrumental-audio--> mix-audio
+```
+
+`play-audio` can consume `vocal-audio`, native `yue2-audio`, helper
+`instrumental-audio`, or `mixed-audio` directly from their respective producers.
+Native YuE2 song output is **not** an instrumental mix input. The YuE2 workflow
+groups the existing native and instrumental-helper contracts; its ABC edge
+applies to score-fed generation, not native generation without ABC.
+
+These are possible artifact-qualified dataflow edges, not mandatory producer
+runs or a linear execution order. Imported/manual inputs need no producer run;
+actual consumed artifact IDs/revisions remain in `Operation.inputs` and catalog
+sources. `stage_dependencies(key)`, `direct_upstream(key)`,
+`direct_downstream(key)`, and `transitive_downstream(key)` read the same
+definitions. Stage-key query results are sorted/deduplicated, not execution plans;
+use the qualified edges and consumed sources to distinguish selected branches.
+
+ABC and USTX independently consume existing MIDI and lyrics; neither consumes
+the other's output or requires a generated IR file. Singer/phonemizer/renderer
+metadata belongs to USTX generation, not ABC or OpenUtau command overrides.
+OpenUtau consumes USTX separately, preserving the boundary needed for later
+reuse after render failure. YuE2 target/generation settings belong to its branch;
+mix gain/duration/normalization settings belong to mixing. These graph queries
+do not fingerprint settings, propagate state, invalidate artifacts, choose reuse
+or execute stages; explicit read-only currentness evaluation is described below.
+`generate-midi` remains an unresolved placeholder,
+and `full-pipeline` remains a deferred coordinator; neither has invented producer
+edges. The remote prototype's transport/conformance/resume stages are unchanged.
+
+#### Stage state and artifact history
+
+`tools.orchestration.execution.StageState` describes current execution-stage
+status: `disabled`, `not-configured`, `ready`, `running`, `success`, `failed`,
+`stopped`, or `stale`. This is separate from capability/discovery `State` and
+`Readiness`, and from the lower-level child-process `ProcessState`.
+
+Run documents expose `stage_state` for that individual attempt. An admitted
+attempt remains `running` through artifact validation/finalization; completion
+uses the whole operation result, not just exit status. A completed stopped or
+cancelled attempt is `stopped`, even if the child exited zero.
+
+`RunRegistry.stage_snapshot(stage, idle_state=...)` combines the latest submitted
+retained attempt's state/run ID with **all** catalogued outputs of that producer
+stage. It uses the existing catalog identity `Operation.stage` (`tool.operation`,
+such as `melisma.abc`), not a second workflow graph or a new artifact model.
+Previous attempts' historical results are unchanged. The per-run `artifacts`
+list still describes only that attempt's inspected outputs; the stage snapshot's
+`artifacts` list includes earlier outputs, partial outputs, and missing-file
+records without filtering by current state, validity, or production status.
+Existence is the catalog's last observation; explicit artifact refresh remains
+the mechanism for rechecking files.
+
+`stage_document(stage, state, catalog=...)` can also project an explicitly
+supplied state over the same history without changing or writing it. Ready,
+Failed, Stopped, and Stale can coexist with a previous successful artifact.
+Conversely, Success does not prove that a file still exists. No retained artifact
+is hidden or removed because of stage state.
+
+The registry remains bounded and session-local. After restart or eviction of all
+that stage's attempts, callers must supply `idle_state`; persisted artifact
+history alone does not establish current readiness or success. This step adds no
+automatic Ready/Disabled/Not-configured/Stale assignment, durable stage-state
+store, workflow-to-operation grouping policy, status UI, dependency blocking,
+invalidation, or run/reuse policy. Artifact-qualified workflow dependencies and
+the distinction between native song and helper instrumental audio are unchanged.
+
+#### Production provenance
+
+Generation adapters now attach an immutable `Operation.production` snapshot of
+their explicit, non-secret contract/settings. This is separate from command
+diagnostics and the mutable saved configuration/presets. Melisma qualifies
+singer/phonemizer/renderer settings by `ustx` output: even a `render-inputs`
+bundle's ABC and IR signatures do not include those settings.
+
+`tools.orchestration.provenance.production_provenance(operation, output_type)`
+constructs inspectable, immutable evidence from that snapshot and the operation's
+**captured** input roles, semantic input types, optional artifact IDs and SHA-256
+content revisions. Call `catalog.bind_inputs(operation)` for a read-only
+candidate; `catalog.begin(operation)` captures/rechecks the actual execution
+inputs. The registry already calls `begin`. Synchronous catalog clients must
+also call `begin` before execution and `end` afterwards. Registration never
+re-reads mutable current inputs/settings to invent historical evidence.
+
+Canonical fields are provenance `version`, execution `stage`, `tool`,
+`operation`, `contract`, selected `executable` and `source_root`, semantic
+`output_type`, effective `settings`, and role-sorted `inputs`. Setting keys and
+input roles are unique; settings and inputs are normalized independently of
+insertion order. `signature` is SHA-256 of compact, sorted-key JSON encoded as
+UTF-8, with finite JSON scalars only. Canonical fields remain available through
+`evidence.canonical`; persistence stores the fields, not just a digest.
+
+Input locator paths are not signature fields: identity and content revisions
+describe selected inputs. In contrast, executable/source/model/VAE/models-root
+paths identify explicit resource selections and are included. Output
+destinations, run IDs, timestamps, PIDs, sessions, stdout-versus-file publication,
+generic operation metadata, and arbitrary environment overrides are excluded.
+Native YuE2 records style, `lyrics_revision`, seed, COT, model/VAE paths, device,
+offline mode and audio stage under its own contract. `lyrics_revision` is the
+lowercase SHA-256 digest of the exact inline lyric string encoded as UTF-8,
+without whitespace or Unicode normalization. Empty lyrics hash the empty byte
+sequence. Complete inline lyrics remain a command input, not a persisted
+provenance setting; no file or catalog artifact is created for them. The helper
+records preparation
+style/seed/composer/empty-lyrics/offline settings separately from generation's
+prepared-manifest revision/models-root/device/offline settings. FFmpeg records
+its three gains, duration, normalization and output codec. OpenUtau records its
+USTX input and explicit tool/source selection; singer metadata is in the USTX,
+not an invented render override. FFplay and helper verification do not declare
+generation settings or produce generation provenance.
+
+Only adapter-owned allowlisted settings are copied; authentication references,
+credentials, tokens and environment values are never resolved, copied or hashed
+as settings. The existing configuration non-secret validator also rejects
+recognizable credential syntax in ordinary configuration before
+hashing/persistence.
+Inline lyric content is hashed only at the native adapter's content boundary,
+not passed through configuration credential detection: legitimate lyrics such
+as `Bearer of the light` are accepted. Only their digest enters the otherwise
+unchanged, fully validated production settings; this is not a configuration
+validation bypass for arbitrary fields.
+As with configuration storage, arbitrary unrecognizable secrets must not be
+entered into non-secret style/resource fields.
+
+Catalog history schema 1 gains optional `CatalogEntry.provenance` and
+`ConsumedRun.productions`. Successful, evidenced outputs record an immutable
+production snapshot and original `output_revision`; each producing run retains
+the snapshot with its artifact ID. Thus later same-path regeneration can update
+the existing per-path entry without destroying earlier successful run evidence.
+Output revision is historical evidence, not a setting or signature ingredient.
+Refresh and stage-state projection never rewrite it. Partial/missing outputs
+do not claim successful provenance. Imported/manual inputs retain their own
+identity/revision without a generated producer. Edited-in-place entries retain
+the original production evidence; Save As copies do not invent a production.
+
+Existing schema-1 records without these fields load as `provenance=None` and
+`productions=()`, explicitly unknown, with no backfill from current configuration.
+Unknown/custom operations or unsnapshotted inputs likewise yield `None`.
+The new fields are optional for reading legacy history; older application
+versions with strict record decoding cannot read the new fields. Provenance has
+its own version 1, and reload validates its shape, version and signature.
+Persisted settings must be JSON arrays of two-element arrays with unique,
+nonempty, NUL-free string keys and finite JSON scalar values. Strings, objects
+or in-memory tuples are not accepted as pair containers. Malformed provenance
+raises `ValueError` at decoding and `CatalogError` during catalog reload;
+loading never rewrites malformed history.
+The unreleased intermediate native representation containing a full `lyrics`
+setting is explicitly rejected on reload (in both entry and run snapshots),
+not silently converted to `lyrics_revision` or rewritten. Such development
+history requires explicit operator handling; files are left untouched on error.
+The generic provenance envelope/version remains unchanged because its structure
+and digest algorithm are unchanged and the intermediate setting had no released
+compatibility promise. Pre-provenance records still load as unknown.
+`same_production_context(recorded, candidate)` returns `True`/`False` for known
+context equality or `None` for unknown evidence. It does **not** classify an
+artifact as current/stale, check its output bytes, change state, or select reuse.
+
+This evidence describes the explicit current adapter contracts, not hidden tool
+defaults or runtime readiness. Model files, voicebanks, executables and source
+trees are identified by selected paths, not newly discovered content/version
+receipts; replacement in place is not detectable without additional resource
+evidence. Helper generation trusts the prepared-manifest input as its contract
+boundary, including its recorded file hashes. Changing manifest bytes is
+detectable; no separate prepared-tree scanner is introduced. Settings stored in
+presets but not consumed by these adapters are not globally fingerprinted.
+Workflow graph identities remain distinct from execution identities and semantic
+artifact types. Automatic lifecycle assignment, blocking, deletion and
+execution/reuse planning remain deferred; explicit read-only assessment and
+artifact-qualified propagation are described below.
+
+#### Structured diagnostic privacy
+
+Trusted `Command` arguments remain unchanged for execution. Diagnostic
+`command_document()` projects inline `--lyrics=<content>` as
+`--lyrics=[REDACTED:inline-content]`; a split `--lyrics <content>` vector uses
+the same `[REDACTED:inline-content]` marker for the value. This structural option
+redaction applies centrally to operation, primary process, active process and
+active/completed validation command copies, independent of execution outcome.
+Display strings are generated from the safe vector, never the original command.
+The marker contains no content digest; `production` already exposes the revision.
+Command sections keep their existing shape, and environment overrides stay absent.
+
+Diagnostic operation metadata has one allowlist:
+`contract_version`, `cot`, `result_root`, `stage`, `stdout_artifact`, `duration`,
+`normalize`, `input`, and `stop_policy`. These describe adapter contracts, modes,
+output/input locations and lifecycle/mix policy, not content or authentication.
+Unknown keys are omitted. Allowlisted values must also pass the existing
+non-secret configuration validation; credential-bearing keys/values are omitted,
+not echoed or replaced with hashes. Internal `Operation.metadata` is unchanged
+for adapter behavior. No additional redaction-state fields are needed because
+the explicit argument marker and omitted metadata express this boundary.
+
+Backend snapshots and automatically saved run diagnostics use these same
+projections on success, failure, rejection, start failure, stop and cancellation.
+This protects structured commands and operation metadata; it does **not** scrub
+arbitrary tool stdout/stderr, raw completion receipts or external tool-generated
+request/output files, which may echo input text. Previously retained diagnostic
+files are not rewritten or deleted by this correction.
+
+#### Read-only currentness and selected-lineage propagation
+
+`tools.web_ui.currentness` evaluates the existing workflow graph against explicit
+`ProductionSelection(workflow, artifact_id, candidate, producer_run=None)` records.
+This narrow selection is an assessment context, not an execution or reuse plan.
+The caller chooses each producing workflow, specific artifact/successful run and
+adapter-built candidate for the same semantic output. Multiple selections may
+belong to `generate-yue2-audio`: helper preparation, helper generation and native
+generation retain distinct operation/contract/output identities.
+
+Each workflow's `productions` declarations identify its owned execution stages
+and any closed semantic output declarations. `WORKFLOW_TOOLS` is only a reporting
+group, not production authority. Fixed-output candidates must declare the selected
+output through their expected artifacts.
+Native generation and helper preparation/generation explicitly declare
+manifest-extensible completion beside their adapters. Their validators require
+a minimum set of files but validate and return every correctly hashed manifest
+entry, including optional files and a score with native COT off. Required-file
+tuples and their semantic types are not exhaustive output allowlists.
+Currentness honors these retained catalog outputs only for an owned,
+manifest-extensible producing stage, using the same producer/filename semantic
+typing as catalog registration. Candidate qualification uses that same contract,
+not tool membership or an arbitrary type wildcard; native song audio still
+cannot be relabeled as helper instrumental audio. Assessment never rereads
+manifests or changes successful history.
+Audio kind/suffix recognition does not grant final-output authority to an entire
+tool family. Under Phase 1, only `yue2-instrumental.generate` produces
+`instrumental-audio`; preparation's optional audio remains generic `audio`,
+retained and inspectable but ineligible for the mix's final instrumental input
+or its `instrumental-audio` dependency edge. Native generation remains
+`yue2-audio`. Classification and candidate qualification share these exact
+operation identities. Already retained preparation audio mislabeled by the old
+classifier is not offered as final instrumental output; its historical record
+and bytes are not rewritten. No preparation input or future audio-conditioning
+contract is prohibited by this output distinction.
+Bundle outputs remain individually qualified: an ABC output belongs to the ABC
+workflow, a USTX output to the USTX workflow, and bound IR can accompany either.
+Incompatible selections raise `ValueError`; changed settings, resources, inputs
+or contract versions remain production-context differences rather than errors.
+
+Call `catalog.bind_inputs(candidate)` **before** evaluation to capture selected
+input IDs/revisions. Call explicit catalog `refresh()` separately when new output
+observations are needed. `assess_currentness(catalog, selections)` snapshots the
+existing immutable entry/run records under their lock, then performs no I/O,
+discovery, rebinding, refresh, configuration reads, writes, execution or deletion.
+It evaluates the supplied captured context, not an implicit global "latest"
+configuration. Re-capture candidates after input edits when assessing that new
+selection; an intentionally retained old candidate describes the old context.
+
+Each immutable `ArtifactAssessment` exposes:
+
+| Field | Values and meaning |
+| --- | --- |
+| `currentness` | `current`, `stale`, `unknown` |
+| `availability` | `present` or `missing`, from the last catalog observation |
+| `integrity` | `original`, `modified`, `unknown`, comparing observed bytes with the historical `output_revision` |
+| `reasons` | Deterministic codes and field/role/type/source identifiers, never configuration values or full provenance |
+
+Matching known successful production context starts as current; a known
+context difference is stale. Missing/insufficient provenance, absent/unbound
+candidate evidence or an unsuccessful production is unknown, not a match or
+mismatch. A missing output is unknown with `availability=missing`, never merely
+stale. Edited output bytes are `integrity=modified` independently of context:
+the producing context can remain current while a consumer's newly captured
+input revision differs. Original evidence is not rewritten to bless edits.
+
+The selected run's `ConsumedRun.productions` snapshot identifies historical
+production even after same-path regeneration. The current entry's provenance
+is a fallback only for its own producer, including compatible histories without
+a retained run row. Legacy entries without provenance stay unknown. Unknown
+IDs/runs, duplicate production selections and ambiguous multiple selected runs
+for the same consumed ID/revision fail explicitly instead of guessing.
+
+Propagation begins at a concrete mismatching selected production. A consumer
+inherits staleness only if its known candidate and historical input evidence
+both consume that source's exact artifact ID and original output revision
+through the same role and semantic type. Inter-workflow links additionally
+require the existing `StageDependency(upstream, input, artifact_type)`. Thus
+native `yue2-audio` cannot flow into an `instrumental-audio` mix edge, unscored
+native generation has no ABC link, and an unrelated output of the same stage
+cannot affect a consumer of another artifact. Imported/manual inputs need no
+producer selection: changed captured input evidence starts at their consumer.
+
+Within one grouped workflow, actual typed captured lineage supplies internal
+links, notably `prepare`'s `configuration` manifest consumed as
+`prepared-manifest` by helper `generate`. No speculative preparation workflow or
+parallel hard-coded dependency map is added. The same role/type/ID/revision
+proof applies. A direct mismatch is already stale; propagation never fabricates
+a hypothetical file revision or changes either recorded signature.
+
+An otherwise matching known consumer becomes unknown when its selected upstream
+production is explicitly unknown/unavailable. A consumer lacking its own
+provenance/candidate cannot gain definite staleness from an ancestor: it and
+its otherwise matching selected descendants remain unknown. A definite direct
+mismatch stays stale despite other unknown inputs. Omitted producer selections
+are not guessed from all catalog artifacts; their inputs remain concrete captured
+inputs, not claims about an unselected desired generating context.
+
+Traversal is a finite monotone worklist (`current -> unknown -> stale` at most);
+immediate-source reasons are collected once and deduplicated after convergence.
+Cycles/repeated links cannot create unbounded reason chains. Reasons identify
+changed setting names, input roles/types/artifact IDs or immediate stale/unknown
+upstream production IDs, not lyrics, secrets, paths/configuration values,
+environment values, arbitrary metadata or entire canonical documents.
+
+`assessed_stage_document(document, assessments)` adds JSON-ready `currentness`
+to an existing `stage_document()` / `RunRegistry.stage_snapshot()` result.
+Only idle `ready` with no retained run ID and a definitely stale selected output
+projects as `stale`. Every retained attempt state, including Success, Failed,
+Running and Stopped, and explicit Disabled/Not-configured states is preserved.
+The original document, `Execution.stage_state`, registry and catalog are never
+changed. Unknown evidence does not assign Stale; existence is still independent.
+
+Existing `changed_inputs()` / direct stale-input warnings retain their meaning:
+captured run sources versus current **observed** catalog revisions. They do not
+know selected settings, contracts, resources or producer intent. Currentness
+uses the same captured revision evidence plus those dimensions and qualified
+selected lineage; it does not reinterpret the old warning as graph-wide stale
+state. Both describe the same revision mismatch when given the same updated
+input context. There is no automatic web integration, execution blocking, deletion,
+rerun, reuse selection or Full Pipeline coordination.
+
+Run the focused assessment tests with:
+
+```sh
+python3 -B -m unittest discover -s tests -p test_stale_propagation.py -v
+```
+
+#### Read-only candidate readiness (Issue #8, Step 5)
+
+`tools.web_ui.readiness.assess_readiness(catalog, workflow, candidate,
+evidence=..., currentness=..., registry=None)` assesses an explicitly selected
+immutable `Operation`, not a workflow name, latest run, or hypothetical plan.
+Its frozen `ReadinessAssessment` exposes separate `workflow`, `stage`,
+`readiness`, and deterministic structured `reasons`; `asdict()` is JSON-ready.
+The constrained candidate vocabulary is independent of capability `Readiness`,
+execution `StageState`, and artifact `Currentness`:
+
+| Candidate readiness | Meaning |
+| --- | --- |
+| `ready` | Every required selected condition is known and satisfied. |
+| `blocked` | At least one required selected condition is definitely unsatisfied. |
+| `unknown` | No definite blocker exists, but supplied evidence is insufficient. |
+
+Precedence is **Blocked > Unknown > Ready**. All safe immediate reasons are
+collected, sorted and deduplicated, not just the first failure.
+
+Callers must explicitly construct/validate candidates, register/bind inputs,
+refresh observations, and discover capabilities **before** assessment.
+`CandidateEvidence(candidate, configuration=None, validated=None,
+capabilities=())` belongs to the exact candidate, including its captured inputs.
+`configuration` uses only `StageState.READY` (configured), `NOT_CONFIGURED`,
+`DISABLED`, or `None` (not supplied); it does not assign any execution state.
+`validated=True` means the existing construction/validation boundary has
+satisfied candidate-specific settings, resource, destination-parent,
+no-overwrite and other preconditions. `False` is known invalid configuration;
+`None` is incomplete evidence. This is supplied evidence, not a second
+configuration validator. Do not mark unrepresented conditions as validated.
+
+Supply only the selected required `Capability` records, not an unfiltered
+inventory. The primary executable must match the candidate's source root,
+executable, contract, and `executable` capability value. Contradictory positive
+executable values within that selected source identity yield Unknown with
+`evidence_missing`, even if one record matches. If an `operation` capability
+is explicitly supplied for that same primary identity, its positive value
+must equal `candidate.name`. A nonmatching positive value, alone or alongside
+a matching record, yields Unknown. No operation record is required when none
+is selected. Known unavailable/unauthorized required records still take
+precedence and Block; unrelated tools and primary sources remain isolated.
+Duplicate identical supplied records are harmless.
+
+Audio validation and playback also require supplied FFprobe executable
+availability evidence. The current evidence API has no independent selected
+validator identity: readiness can assess supplied FFprobe availability evidence,
+but cannot attest exact validator selection without a selected validator
+identity in the evidence contract. No new FFprobe source/contract/value
+matching or validator selection is inferred here. Every selected
+required capability must have observed `State.READY` / `Readiness.READY`
+evidence. Saved configuration and source support do not prove runtime
+availability. Known unavailable/unauthorized records block; failed metadata
+queries with unknown readiness remain Unknown. Capabilities of unrelated tools,
+including the unselected native/helper branch, are irrelevant.
+
+Model, VAE, device, singer, renderer, phonemizer, backend and other resource-value
+filtering remains caller-owned. Readiness respects the supplied required
+records' availability/readiness states; it does not turn
+`ProductionConfiguration.settings` into a second capability requirement engine.
+Only the established primary executable and an explicitly supplied operation
+value receive the candidate-value consistency checks above.
+
+Production contract versions are not allowlisted by readiness. A changed
+contract remains production-context evidence for currentness and caller-validated
+construction evidence for readiness. An arbitrary internally matching contract
+string is not rejected here solely for being unknown; workflow/stage/output
+ownership checks still apply.
+
+Adapter-owned `required_inputs` declarations identify direct required roles;
+existing workflow artifact compatibility supplies accepted semantic types.
+Native generation need not select ABC, while helper generation requires its
+own `prepared-manifest`, not the grouped workflow's possible ABC edge.
+Actual required input-role occurrences are counted before deduplication.
+Repeating a required role blocks as `selected_lineage_ambiguous`, even when
+both `OperationInput` values are identical, consistent with the production
+provenance role-uniqueness invariant. No first/last duplicate is chosen and
+the candidate is never rewritten. This differs from harmless identical
+supplied evidence records, which do not duplicate the candidate's input roles.
+Selected optional inputs are checked; absent optional inputs and optional
+manifest outputs are not prerequisites. Fixed/bundle ownership and
+manifest-extensible output qualification reuse the currentness production
+contract. Required manifest files remain minimums, not exhaustive allowlists.
+
+Each input is checked by its explicit role, type, artifact ID, lexical captured
+path, and revision against the supplied catalog observation. A missing role,
+missing file, failed validation, incompatible type, identity/revision mismatch,
+or definitely stale selected artifact blocks. A missing identity/observation,
+unvalidated input, or insufficient currentness evidence is Unknown, not missing
+or stale. No alternate artifact is selected from a path, stage, or history.
+Generated currentness must qualify the selected successful run/output revision
+and owned producer/output type. Duplicate evidence is harmless; conflicting
+currentness for one production is Unknown, while multiple selected producer
+runs for the same bytes are unsafe ambiguous lineage and Blocked.
+Modified generated bytes without matching production-revision evidence remain
+Unknown; readiness never blesses an edit as regenerated output.
+
+Valid imported/manual artifacts with captured matching bytes need no producer
+run or generating context. Imported generic audio can satisfy the existing
+generic-vocal/playback compatibility, not final `instrumental-audio`.
+The catalog and readiness share `compatible_artifact_type()`; only actual
+`yue2-instrumental.generate` output has final instrumental authority. Preparation
+audio remains generic and retained, including legacy mislabeled history that
+is ineligible without being rewritten.
+
+Readiness consumes the currentness layer's already-qualified selected lineage;
+it does not traverse all possible graph ancestors or recursively demand that
+producers themselves be Ready. A later failed/stopped/cancelled upstream attempt
+does not block a specifically selected earlier valid current artifact.
+Unselected stale/missing outputs, failed sibling branches, mix gain changes,
+failed mixes, and playback failures cannot block independent generation.
+
+Catalog active-path observations and optional registry active output owners
+are read without acquiring ownership. An exact candidate output collision
+blocks; a registry-owned input destination also blocks, while shared catalog
+readers do not imply input writers. Completed executions are not active owners.
+An observed existing output blocks under the adapters' existing no-overwrite
+policy, not merely because its path has historical production records. A
+historical output observed missing is not an occupied destination.
+Paths are compared as captured; assessment never canonicalizes/resolves them.
+Callers must supply the existing canonical construction/binding observations.
+Evidence is a point-in-time snapshot, not an admission token or protection
+against filesystem changes after observation.
+
+The reason enum is closed: `required_input_missing`, `artifact_missing`,
+`artifact_invalid`, `artifact_type_incompatible`, `artifact_role_mismatch`,
+`artifact_identity_mismatch`, `artifact_revision_mismatch`, `artifact_stale`,
+`artifact_currentness_unknown`, `capability_unavailable`,
+`configuration_missing`, `configuration_invalid`, `candidate_contract_invalid`,
+`selected_lineage_ambiguous`, `output_path_active`, `input_path_active`,
+`output_path_occupied`, and `evidence_missing`.
+Reasons retain only known roles/types/workflows, well-formed artifact IDs and
+allowlisted immediate stale-source codes. They omit paths, settings/lyrics,
+commands, environment, arbitrary metadata, raw diagnostics and full provenance.
+Stale context fields are represented by `context_changed`, `setting_changed`,
+`input_changed`, or `upstream_stale`, never their configuration values.
+
+Assessment snapshots immutable catalog/registry records under their existing
+locks and performs no filesystem I/O, hashing, tool discovery, input binding,
+manifest completion, refresh, configuration mutation, reservation, execution,
+history writes, stale-artifact invalidation or deletion. It does not modify
+caller documents or project readiness over any attempt/currentness state.
+Tests guard these boundaries and compare persisted catalog bytes plus in-memory
+records before and after assessment.
+
+No HTTP/UI integration or execution enforcement is added. Audio workflows
+remain unavailable in the web UI pending Issue #9, regardless of a model-free
+library candidate's supplied evidence. No scheduler, rerun, reuse decision,
+Full Pipeline orchestration, or Issue #10 integration is implemented.
+
+```sh
+python3 -B -m unittest discover -s tests -p test_readiness.py -v
+```
 
 Run the focused, model-free tests with:
 
@@ -604,9 +1092,11 @@ editors; concurrent external file access is not a filesystem sandbox.
 Known consumers retain the exact artifact ID/revision they used and their
 historical success. In-place edits, or external changes observed on Refresh,
 show a direct-consumer stale-input warning. A separately saved derived copy
-does not stale consumers of its unchanged source. There is no transitive stale
-propagation, settings invalidation, automatic rerun, scheduling or reuse plan
-(Issue #8). Audio execution remains Issue #9 and Full Pipeline remains #10.
+does not stale consumers of its unchanged source. These existing UI warnings
+do not perform transitive propagation or settings invalidation; Issue #8's
+explicit read-only selected-context evaluator is described above. No automatic
+rerun, scheduling or reuse plan is added. Audio execution remains Issue #9 and
+Full Pipeline remains #10.
 
 Each finalized web run also writes a private diagnostic JSON file alongside
 the history index, under `HISTORY_STEM-files/SESSION_ID/RUN_ID.json`. It records

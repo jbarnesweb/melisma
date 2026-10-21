@@ -6,22 +6,93 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
-from dataclasses import fields, replace
+from dataclasses import asdict, fields, replace
+from enum import Enum
 from pathlib import Path
 
 from .adapters import ToolAdapter
 from .artifact_catalog import ArtifactCatalog, CatalogError, input_document
+from .configuration import _nonsecret
 from .process import (
     LIVE_STATES, OUTPUT_LIMIT, Command, Operation, OperationResult, OwnedChild,
     ProcessResult, ProcessRunner, ProcessState, console_result, utc_now,
 )
 
 
-def command_document(command: Command) -> dict[str, object]:
+INLINE_CONTENT_REDACTION = "[REDACTED:inline-content]"
+DIAGNOSTIC_METADATA_KEYS = frozenset({
+    "contract_version", "cot", "result_root", "stage", "stdout_artifact",
+    "duration", "normalize", "input", "stop_policy",
+})
+
+
+class StageState(str, Enum):
+    """Current stage status, separate from capability evidence and artifact history."""
+
+    DISABLED = "disabled"
+    NOT_CONFIGURED = "not-configured"
+    READY = "ready"
+    RUNNING = "running"
+    SUCCESS = "success"
+    FAILED = "failed"
+    STOPPED = "stopped"
+    STALE = "stale"
+
+
+def stage_document(
+    stage: str, state: StageState, *, catalog: ArtifactCatalog | None = None,
+    run_id: str | None = None,
+) -> dict[str, object]:
+    """Project supplied state and independent catalog history without changing either.
+
+    State is not inferred from output existence. Ready/disabled/not-configured/
+    stale assignment belongs to callers, not this read-only representation.
+    Artifact existence/validity reflects the catalog's last observation.
+    """
+    if not isinstance(state, StageState):
+        raise ValueError("expected constrained StageState")
     return {
-        "executable": str(command.executable), "arguments": list(command.arguments),
-        "cwd": str(command.cwd), "display": command.display,
+        "stage": stage, "state": state.value, "run_id": run_id,
+        "artifacts": [] if catalog is None else [
+            asdict(entry) for entry in catalog.stage_artifacts(stage)
+        ],
     }
+
+
+def command_document(command: Command) -> dict[str, object]:
+    """Diagnostic projection only; never change the command used by the child."""
+    arguments = []
+    redact_next = False
+    for argument in command.arguments:
+        if redact_next:
+            arguments.append(INLINE_CONTENT_REDACTION)
+            redact_next = False
+        elif argument == "--lyrics":
+            arguments.append(argument)
+            redact_next = True
+        elif argument.startswith("--lyrics="):
+            arguments.append(f"--lyrics={INLINE_CONTENT_REDACTION}")
+        else:
+            arguments.append(argument)
+    safe = replace(command, arguments=tuple(arguments))
+    return {
+        "executable": str(safe.executable), "arguments": list(safe.arguments),
+        "cwd": str(safe.cwd), "display": safe.display,
+    }
+
+
+def diagnostic_metadata(metadata: tuple[tuple[str, str], ...]) -> dict[str, str]:
+    """Retain known operational fields only, omitting unsafe values without echoing."""
+    safe = {}
+    for key, value in metadata:
+        if key not in DIAGNOSTIC_METADATA_KEYS or not isinstance(value, str):
+            continue
+        try:
+            _nonsecret({key: value})
+        except ValueError:
+            continue
+        safe[key] = value
+    return safe
 
 
 def operation_document(operation: Operation) -> dict[str, object]:
@@ -32,8 +103,9 @@ def operation_document(operation: Operation) -> dict[str, object]:
             {"path": str(item.path), "kind": item.kind, "allow_empty": item.allow_empty}
             for item in operation.expected
         ],
-        "metadata": dict(operation.metadata),
+        "metadata": diagnostic_metadata(operation.metadata),
         "inputs": [input_document(item) for item in operation.inputs],
+        "production": asdict(operation.production) if operation.production is not None else None,
     }
 
 
@@ -78,6 +150,19 @@ class Execution(ProcessRunner):
     def is_complete(self) -> bool:
         with self.lock:
             return self.result is not None
+
+    @property
+    def stage_state(self) -> StageState:
+        """This attempt's status; finalization/validation is still Running."""
+        with self.lock:
+            if self.result is None:
+                return StageState.RUNNING
+            if (
+                self.stop_requested or self.result.process.stop_requested
+                or self.result.process.state == ProcessState.CANCELLED
+            ):
+                return StageState.STOPPED
+            return StageState.SUCCESS if self.result.success else StageState.FAILED
 
     def run(
         self, command: Command, *, stdout_artifact: Path | None = None,
@@ -196,6 +281,7 @@ class Execution(ProcessRunner):
             stoppable = (active or process).state in LIVE_STATES
             return {
                 "id": self.id, **operation_document(self.operation),
+                "stage_state": self.stage_state.value,
                 "process": process_document(process),
                 "complete": result is not None,
                 "phase": "complete" if result is not None else
@@ -277,6 +363,23 @@ class RunRegistry:
     def list(self) -> list[dict[str, object]]:
         with self.lock:
             return [run.snapshot() for run in self.runs.values()]
+
+    def stage_snapshot(self, stage: str, *, idle_state: StageState) -> dict[str, object]:
+        """Latest submitted retained attempt plus independent producer history.
+
+        Identities are the catalog's tool.operation keys, not workflow graph keys.
+        Without a retained attempt, the caller supplies state; persisted artifacts
+        alone establish neither current readiness nor current execution success.
+        """
+        with self.lock:
+            run = next((
+                item for item in reversed(self.runs.values())
+                if item.operation.stage == stage
+            ), None)
+            return stage_document(
+                stage, idle_state if run is None else run.stage_state,
+                catalog=self.catalog, run_id=run.id if run is not None else None,
+            )
 
     def close(self) -> None:
         with self.lock:

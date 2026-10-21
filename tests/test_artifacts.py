@@ -42,9 +42,9 @@ class ArtifactTests(unittest.TestCase):
         path.write_text(text, encoding="utf-8")
         return path
 
-    def result(self, path, *, kind="file", tool="fixture", code=0, inputs=()):
+    def result(self, path, *, kind="file", tool="fixture", name="generate", code=0, inputs=()):
         operation = Operation(
-            tool, "generate", self.command, (ExpectedArtifact(path, kind),), inputs=inputs,
+            tool, name, self.command, (ExpectedArtifact(path, kind),), inputs=inputs,
         )
         process = ProcessResult(self.command, ProcessState.EXITED, code, pid=123)
         return OperationResult(
@@ -117,11 +117,12 @@ class ArtifactTests(unittest.TestCase):
         self.assertEqual(len(self.catalog.runs), 3)
 
     def test_native_and_instrumental_semantics_and_duplicate_manifest_validation(self):
-        for tool, expected in (("yue2-native", "yue2-audio"),
-                               ("yue2-instrumental", "instrumental-audio"),
-                               ("openutau", "vocal-audio"), ("ffmpeg", "mixed-audio")):
+        for tool, name, expected in (("yue2-native", "generate", "yue2-audio"),
+                                     ("yue2-instrumental", "generate", "instrumental-audio"),
+                                     ("openutau", "render", "vocal-audio"),
+                                     ("ffmpeg", "mix", "mixed-audio")):
             path = self.file(f"{tool}.flac")
-            result = self.result(path, kind="audio", tool=tool)
+            result = self.result(path, kind="audio", tool=tool, name=name)
             bad = replace(inspect_artifact(ExpectedArtifact(path)), valid=False, error="hash mismatch")
             self.catalog.register_result(replace(
                 result, artifacts=(*result.artifacts, bad), errors=("hash mismatch",),
@@ -139,6 +140,30 @@ class ArtifactTests(unittest.TestCase):
         self.assertEqual(len(self.catalog.compatible(
             accepted_artifact_types("play-audio", "audio"),
         )), 1)
+
+    def test_audio_semantics_require_exact_producing_operation_without_io(self):
+        for tool, name, expected_type in (
+            ("yue2-instrumental", "prepare", "audio"),
+            ("yue2-instrumental", "verify", "audio"),
+            ("yue2-instrumental", "generate", "instrumental-audio"),
+            ("yue2-native", "generate", "yue2-audio"),
+            ("yue2-native", "prepare", "audio"),
+            ("openutau", "render", "vocal-audio"),
+            ("openutau", "generate", "audio"),
+            ("ffmpeg", "mix", "mixed-audio"),
+            ("ffmpeg", "generate", "audio"),
+        ):
+            for suffix, kind in (
+                (".wav", "file"), (".FLAC", "file"), (".mp3", "file"),
+                (".ogg", "file"), (".bin", "audio"),
+            ):
+                declaration = ExpectedArtifact(self.root / f"unopened{suffix}", kind)
+                operation = Operation(tool, name, self.command, (declaration,))
+                record = catalog_module.ArtifactRecord(declaration, True, 10, True)
+                with self.subTest(stage=operation.stage, suffix=suffix, kind=kind):
+                    with mock.patch.object(Path, "open", side_effect=AssertionError("classification I/O")):
+                        self.assertEqual(catalog_module.semantic_type(operation, record), expected_type)
+        self.assertFalse(self.history.exists())
 
     def test_failed_output_can_be_regenerated_after_removing_partial_file(self):
         path = self.file("partial.txt")
@@ -561,7 +586,9 @@ class ArtifactTests(unittest.TestCase):
 
     def test_audio_probe_evidence_is_not_reused_after_content_changes(self):
         path = self.file("vocal.wav")
-        self.catalog.register_result(self.result(path, kind="audio", tool="openutau"), "vocal")
+        self.catalog.register_result(
+            self.result(path, kind="audio", tool="openutau", name="render"), "vocal",
+        )
         entry = self.entries()[0]
         self.catalog.refresh()
         self.assertTrue(self.catalog.get(entry["id"]).valid)

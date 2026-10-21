@@ -19,6 +19,8 @@ from enum import Enum
 from pathlib import Path
 from typing import BinaryIO
 
+from .provenance import ProductionConfiguration
+
 
 class ProcessState(str, Enum):
     CREATED = "created"
@@ -154,6 +156,12 @@ class Operation:
     expected: tuple[ExpectedArtifact, ...]
     metadata: tuple[tuple[str, str], ...] = ()
     inputs: tuple[OperationInput, ...] = ()
+    production: ProductionConfiguration | None = None
+
+    @property
+    def stage(self) -> str:
+        """The execution-stage identity already used by artifact history."""
+        return f"{self.tool}.{self.name}"
 
 
 @dataclass(frozen=True)

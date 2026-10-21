@@ -23,6 +23,7 @@ from .process import (
     ProcessRunner,
     ProcessState,
 )
+from .provenance import ProductionConfiguration
 
 
 class Adapter(Protocol):
@@ -40,6 +41,7 @@ class Adapter(Protocol):
 class ToolAdapter:
     tool = ""
     operations: tuple[str, ...] = ()
+    required_inputs: dict[str, tuple[tuple[str, str], ...]] = {}
 
     def __init__(
         self, executable: Path, cwd: Path, *, audio: AudioValidator | None = None
@@ -69,13 +71,14 @@ class ToolAdapter:
         metadata: tuple[tuple[str, str], ...] = (),
         environment: tuple[tuple[str, str | None], ...] = (),
         inputs: tuple[OperationInput, ...] = (),
+        production: ProductionConfiguration | None = None,
     ) -> Operation:
         if name not in self.operations:
             raise ValueError(f"unsupported {self.tool} operation: {name}")
         return Operation(
             self.tool, name,
             Command(self.executable, arguments, self.cwd, environment),
-            expected, metadata, inputs,
+            expected, metadata, inputs, production,
         )
 
     def execute(self, operation: Operation, runner: ProcessRunner) -> OperationResult:
@@ -133,6 +136,7 @@ class ToolAdapter:
 class MelismaAdapter(ToolAdapter):
     tool = "melisma"
     operations = ("ir", "abc", "ustx", "render-inputs")
+    required_inputs = dict.fromkeys(operations, (("midi", "midi"), ("lyrics", "lyrics")))
 
     def build(
         self, mode: str, midi: Path, lyrics: Path, output: Path, *,
@@ -179,15 +183,21 @@ class MelismaAdapter(ToolAdapter):
             output = new_output(output, self.cwd)
             expected = (ExpectedArtifact(output, mode),)
             arguments = ("--format", mode, *options, str(midi), str(lyrics), str(output))
+        production = ProductionConfiguration(
+            "melisma-phase1",
+            output_settings=(("ustx", (
+                ("singer", singer), ("phonemizer", phonemizer), ("renderer", renderer),
+            )),) if mode in ("ustx", "render-inputs") else (),
+        )
         if publish_stdout:
             if mode == "render-inputs":
                 raise ValueError("stdout publication requires a single-file mode")
             return self._operation(
                 mode, arguments[:-1], expected,
                 metadata=(("stdout_artifact", str(output)),),
-                inputs=inputs,
+                inputs=inputs, production=production,
             )
-        return self._operation(mode, arguments, expected, inputs=inputs)
+        return self._operation(mode, arguments, expected, inputs=inputs, production=production)
 
     def run(self, operation: Operation, runner: ProcessRunner) -> ProcessResult:
         destination = dict(operation.metadata).get("stdout_artifact")
@@ -199,6 +209,7 @@ class MelismaAdapter(ToolAdapter):
 class OpenUtauAdapter(ToolAdapter):
     tool = "openutau"
     operations = ("render",)
+    required_inputs = {"render": (("ustx", "ustx"),)}
 
     def build(self, ustx: Path, output: Path) -> Operation:
         ustx = existing_input(ustx, self.cwd)
@@ -209,12 +220,16 @@ class OpenUtauAdapter(ToolAdapter):
             "render", ("render", str(ustx), "--out", str(output)),
             (ExpectedArtifact(output, "audio"),),
             inputs=(OperationInput("ustx", ustx, "ustx"),),
+            production=ProductionConfiguration("openutau-headless-phase1"),
         )
 
 
 class FFmpegAdapter(ToolAdapter):
     tool = "ffmpeg"
     operations = ("mix",)
+    required_inputs = {
+        "mix": (("instrumental", "instrumental-audio"), ("vocal", "vocal-audio")),
+    }
 
     def build(
         self, instrumental: Path, vocal: Path, output: Path, *,
@@ -258,6 +273,11 @@ class FFmpegAdapter(ToolAdapter):
             metadata=(("duration", duration), ("normalize", str(normalize))),
             inputs=(OperationInput("instrumental", instrumental, "instrumental-audio"),
                     OperationInput("vocal", vocal, "vocal-audio")),
+            production=ProductionConfiguration("ffmpeg-phase1", (
+                ("instrumental_gain", numeric_gains[0]), ("vocal_gain", numeric_gains[1]),
+                ("master_gain", numeric_gains[2]), ("duration", duration),
+                ("normalize", normalize), ("codec", "pcm_s16le"),
+            )),
         )
 
     def complete(self, result: OperationResult, runner: ProcessRunner) -> OperationResult:
